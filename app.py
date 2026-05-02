@@ -523,14 +523,35 @@ def load_attendance(use_db: bool) -> pd.DataFrame:
 st.title(f"💼 {APP_NAME}")
 st.caption("Supabase PostgreSQL enabled with safe local CSV fallback.")
 
+# One authoritative database readiness check.
+# The app is considered Supabase-ready only when BOTH login and table setup work.
 connected, db_message = test_database_connection()
 
 if connected:
-    st.success("✅ Supabase database connected.")
+    try:
+        initialize_sms_tables()
+        db_message = "Supabase login and SMS table setup completed successfully."
+    except Exception as exc:
+        connected = False
+        db_message = (
+            "Supabase login/table setup failed. The first connection test may have passed, "
+            "but table creation/repair could not complete. Most commonly this means the "
+            "DATABASE_URL password in Streamlit Secrets is still old/wrong, the password reset "
+            "has not propagated to the pooler yet, or the pooler URL was copied from a different project.\n\n"
+            f"Raw error:\n{exc}"
+        )
+
+if connected:
+    st.success("✅ Supabase database connected and SMS tables are ready.")
 else:
-    st.warning("⚠️ Database connection issue. Falling back to local CSV for this session.")
+    st.warning("⚠️ Database connection/setup issue. Falling back to local CSV for this session.")
     with st.expander("Show database error details"):
         st.code(db_message)
+    st.info(
+        "If the error says 'password authentication failed for user postgres', reset the Supabase "
+        "database password, update Streamlit Secrets, save, and reboot the app. Do not use your "
+        "Supabase login password, API anon key, service role key, or GitHub password."
+    )
 
 # Sidebar controls
 with st.sidebar:
@@ -549,14 +570,6 @@ with st.sidebar:
 
     st.divider()
     st.caption("Keep DATABASE_URL only in Streamlit Secrets, not inside GitHub code.")
-
-# Try to initialize tables automatically once after confirmed DB connection.
-if connected:
-    try:
-        initialize_sms_tables()
-    except Exception as exc:
-        st.error("Connected to Supabase, but table setup failed.")
-        st.code(str(exc))
 
 # Main tabs
 home_tab, employee_tab, attendance_tab, payroll_tab = st.tabs(
