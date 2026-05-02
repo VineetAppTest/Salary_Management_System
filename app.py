@@ -10,6 +10,26 @@ from io import BytesIO
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from sqlalchemy import text
+
+def test_database_connection():
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT current_database(), current_user;"))
+            row = result.fetchone()
+
+        st.success("Supabase database connected successfully.")
+        st.write({
+            "database": row[0],
+            "user": row[1],
+        })
+        return True
+
+    except Exception as e:
+        st.error("Database connection failed.")
+        st.exception(e)
+        return False
+
 from urllib.parse import urlparse
 import streamlit as st
 
