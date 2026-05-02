@@ -10,6 +10,31 @@ from io import BytesIO
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from urllib.parse import urlparse
+import streamlit as st
+
+def show_db_debug():
+    try:
+        raw_url = str(st.secrets.get("DATABASE_URL", "")).replace("\x00", "").strip()
+        parsed = urlparse(raw_url)
+
+        st.info("Database debug details")
+
+        st.write({
+            "scheme": parsed.scheme,
+            "username": parsed.username,
+            "host": parsed.hostname,
+            "port": parsed.port,
+            "database": parsed.path.replace("/", ""),
+            "has_password": bool(parsed.password),
+            "contains_null_character": "\x00" in raw_url,
+        })
+
+    except Exception as e:
+        st.error(f"Could not parse DATABASE_URL safely: {e}")
+
+show_db_debug()
+
 APP_DIR = Path(__file__).parent
 DATA_DIR = APP_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
