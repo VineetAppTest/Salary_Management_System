@@ -768,3 +768,11 @@ Updated data files merged:
 Notes:
 - Uploaded checked clean bulk leave file has been placed as data/leave_entries.csv.
 - Payroll rows are intentionally not pre-generated; generate payroll inside the app after deployment/testing.
+
+
+# V69 Seed Confirmation Fix
+
+Fixed:
+- Clicking Tech → Database Health → Seed Supabase from CSV now shows a persistent success/error message.
+- Removed immediate rerun after seed/export so confirmation does not disappear.
+- Added visible current Supabase row-count summary for key tables.

@@ -3459,6 +3459,14 @@ def database_health_panel():
     else:
         st.error(f"Storage Mode: {status}")
 
+    if st.session_state.get("db_health_message"):
+        st.success(st.session_state.db_health_message)
+        st.caption("This message confirms the last database action completed.")
+        try:
+            st.balloons()
+        except Exception:
+            pass
+
     c1, c2, c3 = st.columns(3)
     if c1.button("Refresh DB Health", use_container_width=True):
         st.rerun()
@@ -3466,22 +3474,40 @@ def database_health_panel():
         try:
             msg = seed_supabase_from_csv(overwrite=True)
             add_audit(st.session_state.user["email"], "SEED_SUPABASE_FROM_CSV", msg)
+            st.session_state.db_health_message = msg
             set_confirmation(msg, celebrate=True)
-            st.rerun()
+            st.success(msg)
+            st.toast("Supabase seed completed.", icon="✅")
         except Exception as e:
+            st.session_state.db_health_message = f"Seed failed: {e}"
             st.error(f"Seed failed: {e}")
     if c3.button("Export Supabase to CSV", use_container_width=True):
         try:
             msg = export_supabase_to_csv()
             add_audit(st.session_state.user["email"], "EXPORT_SUPABASE_TO_CSV", msg)
+            st.session_state.db_health_message = msg
             set_confirmation(msg, celebrate=True)
-            st.rerun()
+            st.success(msg)
+            st.toast("Supabase export completed.", icon="✅")
         except Exception as e:
+            st.session_state.db_health_message = f"Export failed: {e}"
             st.error(f"Export failed: {e}")
 
     counts = get_csv_row_counts().merge(get_db_row_counts(), on="Table", how="outer")
     st.markdown("#### Row Count Validation")
     st.dataframe(counts, use_container_width=True)
+
+    try:
+        key_tables = ["employees", "leave_entries", "advance_cases", "advance_schedule", "users"]
+        db_ok_lines = []
+        for t in key_tables:
+            row = counts[counts["Table"].astype(str) == t]
+            if not row.empty and "DB Rows" in row.columns:
+                db_ok_lines.append(f"{t}: {row['DB Rows'].iloc[0]}")
+        if db_ok_lines:
+            st.info("Current Supabase row counts → " + " | ".join(db_ok_lines))
+    except Exception:
+        pass
 
     expected = {"employees": 7, "leave_entries": 62, "advance_cases": 6, "advance_schedule": 6, "users": 1}
     rows = []
