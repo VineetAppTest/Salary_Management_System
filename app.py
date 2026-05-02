@@ -190,7 +190,7 @@ def read_sql_df(sql: str, params: Optional[dict[str, Any]] = None) -> pd.DataFra
 # -----------------------------------------------------------------------------
 
 def initialize_sms_tables() -> None:
-    """Create basic SMS tables if they do not already exist."""
+    """Create/repair basic SMS tables if they do not already exist."""
     run_sql(
         """
         CREATE TABLE IF NOT EXISTS employees (
@@ -206,28 +206,61 @@ def initialize_sms_tables() -> None:
         """
     )
 
+    # If an older/incompatible employees table already existed, CREATE IF NOT EXISTS
+    # would not add missing columns. These ALTERs repair that situation safely.
+    for sql in [
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS emp_id TEXT;",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS employee_name TEXT;",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS level TEXT DEFAULT 'L1';",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS monthly_salary NUMERIC(12,2) DEFAULT 0;",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS paid_leave_quota INTEGER DEFAULT 2;",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE;",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();",
+        "CREATE UNIQUE INDEX IF NOT EXISTS employees_emp_id_unique_idx ON employees (emp_id);",
+    ]:
+        try:
+            run_sql(sql)
+        except Exception:
+            # Do not block the app during repair; read/save will show specific errors if needed.
+            pass
+
     run_sql(
         """
         CREATE TABLE IF NOT EXISTS attendance (
             id BIGSERIAL PRIMARY KEY,
             attendance_date DATE NOT NULL,
-            emp_id TEXT NOT NULL REFERENCES employees(emp_id) ON DELETE CASCADE,
+            emp_id TEXT NOT NULL,
             status TEXT NOT NULL,
             leave_type TEXT,
             supervisor TEXT,
             remarks TEXT,
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            UNIQUE(attendance_date, emp_id)
+            created_at TIMESTAMPTZ DEFAULT NOW()
         );
         """
     )
+
+    for sql in [
+        "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS attendance_date DATE;",
+        "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS emp_id TEXT;",
+        "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS status TEXT;",
+        "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS leave_type TEXT;",
+        "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS supervisor TEXT;",
+        "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS remarks TEXT;",
+        "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();",
+        "CREATE UNIQUE INDEX IF NOT EXISTS attendance_date_emp_id_unique_idx ON attendance (attendance_date, emp_id);",
+    ]:
+        try:
+            run_sql(sql)
+        except Exception:
+            pass
 
     run_sql(
         """
         CREATE TABLE IF NOT EXISTS payroll_runs (
             id BIGSERIAL PRIMARY KEY,
             payroll_month DATE NOT NULL,
-            emp_id TEXT NOT NULL REFERENCES employees(emp_id) ON DELETE CASCADE,
+            emp_id TEXT NOT NULL,
             working_days INTEGER DEFAULT 0,
             present_days NUMERIC(8,2) DEFAULT 0,
             paid_leave_days NUMERIC(8,2) DEFAULT 0,
@@ -241,6 +274,124 @@ def initialize_sms_tables() -> None:
         """
     )
 
+
+# -----------------------------------------------------------------------------
+# Data normalization helpers
+# -----------------------------------------------------------------------------
+
+EXPECTED_EMPLOYEE_COLUMNS = [
+    "emp_id",
+    "employee_name",
+    "level",
+    "monthly_salary",
+    "paid_leave_quota",
+    "active",
+]
+
+EXPECTED_ATTENDANCE_COLUMNS = [
+    "attendance_date",
+    "emp_id",
+    "status",
+    "leave_type",
+    "supervisor",
+    "remarks",
+]
+
+COLUMN_ALIASES = {
+    "employee_id": "emp_id",
+    "emp id": "emp_id",
+    "empid": "emp_id",
+    "emp_code": "emp_id",
+    "employee_code": "emp_id",
+    "employee no": "emp_id",
+    "employee_number": "emp_id",
+    "employee name": "employee_name",
+    "emp_name": "employee_name",
+    "name": "employee_name",
+    "full_name": "employee_name",
+    "employee": "employee_name",
+    "salary": "monthly_salary",
+    "monthly_amount": "monthly_salary",
+    "fixed_monthly_salary": "monthly_salary",
+    "gross_salary": "monthly_salary",
+    "paid_leaves": "paid_leave_quota",
+    "paid_leave_balance": "paid_leave_quota",
+    "leave_quota": "paid_leave_quota",
+    "quota": "paid_leave_quota",
+    "attendance date": "attendance_date",
+    "date": "attendance_date",
+    "leave status": "status",
+    "leave_type/status": "status",
+}
+
+
+def clean_column_name(column: object) -> str:
+    """Convert old Excel/CSV style column names into app-safe snake_case names."""
+    col = str(column or "").strip().replace("\ufeff", "")
+    lowered = col.lower().strip()
+    lowered = lowered.replace("-", "_").replace("/", "_").replace(".", "_")
+    lowered = "_".join(lowered.split())
+    return COLUMN_ALIASES.get(lowered, lowered)
+
+
+def normalize_dataframe_columns(df: pd.DataFrame, expected_columns: list[str], table_name: str) -> pd.DataFrame:
+    """
+    Normalizes column names so old data with Employee ID / Emp_ID / employee_id
+    does not crash the app when the code expects emp_id.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(columns=expected_columns)
+
+    normalized = df.copy()
+    normalized.columns = [clean_column_name(c) for c in normalized.columns]
+
+    # If duplicate columns are created after normalization, keep the first non-null value.
+    if normalized.columns.duplicated().any():
+        normalized = normalized.groupby(level=0, axis=1).first()
+
+    # Last-resort mapping if an existing DB table only has id, but not emp_id.
+    if "emp_id" not in normalized.columns and "id" in normalized.columns:
+        normalized["emp_id"] = normalized["id"].astype(str)
+
+    # Avoid hard crash: return a clean empty expected frame if emp_id is genuinely unavailable.
+    if table_name == "employees" and "emp_id" not in normalized.columns:
+        st.error(
+            "Employee data was found, but no Employee ID column could be identified. "
+            "Please rename the ID column to emp_id or Employee ID."
+        )
+        st.write("Available columns:", list(df.columns))
+        return pd.DataFrame(columns=expected_columns)
+
+    if table_name == "attendance" and "emp_id" not in normalized.columns:
+        # Attendance can be empty/incomplete during setup; avoid crashing payroll.
+        return pd.DataFrame(columns=expected_columns)
+
+    for col in expected_columns:
+        if col not in normalized.columns:
+            if col == "level":
+                normalized[col] = "L1"
+            elif col == "monthly_salary":
+                normalized[col] = 0.0
+            elif col == "paid_leave_quota":
+                normalized[col] = 2
+            elif col == "active":
+                normalized[col] = True
+            else:
+                normalized[col] = ""
+
+    if "monthly_salary" in normalized.columns:
+        normalized["monthly_salary"] = pd.to_numeric(normalized["monthly_salary"], errors="coerce").fillna(0.0)
+    if "paid_leave_quota" in normalized.columns:
+        normalized["paid_leave_quota"] = pd.to_numeric(normalized["paid_leave_quota"], errors="coerce").fillna(2).astype(int)
+    if "active" in normalized.columns:
+        normalized["active"] = normalized["active"].fillna(True)
+
+    # Remove blank employee IDs to avoid selectbox/runtime issues.
+    if "emp_id" in normalized.columns:
+        normalized["emp_id"] = normalized["emp_id"].astype(str).str.strip()
+        normalized = normalized[normalized["emp_id"] != ""]
+
+    return normalized[expected_columns]
 
 # -----------------------------------------------------------------------------
 # CSV fallback helpers
@@ -276,39 +427,33 @@ def ensure_csv_files() -> None:
 def load_employees(use_db: bool) -> pd.DataFrame:
     if use_db:
         try:
-            return read_sql_df(
-                """
-                SELECT emp_id, employee_name, level, monthly_salary, paid_leave_quota, active
-                FROM employees
-                ORDER BY emp_id;
-                """
-            )
-        except Exception:
-            return pd.DataFrame(
-                columns=["emp_id", "employee_name", "level", "monthly_salary", "paid_leave_quota", "active"]
-            )
+            df = read_sql_df("SELECT * FROM employees ORDER BY emp_id NULLS LAST;")
+            return normalize_dataframe_columns(df, EXPECTED_EMPLOYEE_COLUMNS, "employees")
+        except Exception as exc:
+            st.warning("Could not read employees table from Supabase. Showing an empty employee list.")
+            with st.expander("Employee table read error"):
+                st.code(str(exc))
+            return pd.DataFrame(columns=EXPECTED_EMPLOYEE_COLUMNS)
 
     ensure_csv_files()
-    return pd.read_csv(EMPLOYEE_CSV)
+    df = pd.read_csv(EMPLOYEE_CSV)
+    return normalize_dataframe_columns(df, EXPECTED_EMPLOYEE_COLUMNS, "employees")
 
 
 def load_attendance(use_db: bool) -> pd.DataFrame:
     if use_db:
         try:
-            return read_sql_df(
-                """
-                SELECT attendance_date, emp_id, status, leave_type, supervisor, remarks
-                FROM attendance
-                ORDER BY attendance_date DESC, emp_id;
-                """
-            )
-        except Exception:
-            return pd.DataFrame(
-                columns=["attendance_date", "emp_id", "status", "leave_type", "supervisor", "remarks"]
-            )
+            df = read_sql_df("SELECT * FROM attendance ORDER BY attendance_date DESC NULLS LAST, emp_id NULLS LAST;")
+            return normalize_dataframe_columns(df, EXPECTED_ATTENDANCE_COLUMNS, "attendance")
+        except Exception as exc:
+            st.warning("Could not read attendance table from Supabase. Showing an empty attendance list.")
+            with st.expander("Attendance table read error"):
+                st.code(str(exc))
+            return pd.DataFrame(columns=EXPECTED_ATTENDANCE_COLUMNS)
 
     ensure_csv_files()
-    return pd.read_csv(ATTENDANCE_CSV)
+    df = pd.read_csv(ATTENDANCE_CSV)
+    return normalize_dataframe_columns(df, EXPECTED_ATTENDANCE_COLUMNS, "attendance")
 
 
 # -----------------------------------------------------------------------------
@@ -448,6 +593,7 @@ with employee_tab:
                     "paid_leave_quota": int(paid_leave_quota),
                     "active": bool(active),
                 }
+                df = normalize_dataframe_columns(df, EXPECTED_EMPLOYEE_COLUMNS, "employees")
                 df = df[df["emp_id"].astype(str) != emp_id.strip()]
                 df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                 df.to_csv(EMPLOYEE_CSV, index=False)
@@ -460,7 +606,7 @@ with attendance_tab:
     st.subheader("Attendance Entry")
 
     employees_df = load_employees(connected)
-    employee_ids = employees_df["emp_id"].astype(str).tolist() if not employees_df.empty else []
+    employee_ids = employees_df.get("emp_id", pd.Series(dtype=str)).astype(str).str.strip().tolist() if not employees_df.empty else []
 
     if not employee_ids:
         st.info("Add employees first before entering attendance.")
@@ -529,6 +675,7 @@ with attendance_tab:
                     "supervisor": supervisor,
                     "remarks": remarks,
                 }
+                df = normalize_dataframe_columns(df, EXPECTED_ATTENDANCE_COLUMNS, "attendance")
                 df = df[~((df["attendance_date"].astype(str) == str(attendance_date)) & (df["emp_id"].astype(str) == selected_emp_id))]
                 df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                 df.to_csv(ATTENDANCE_CSV, index=False)
@@ -554,11 +701,14 @@ with payroll_tab:
 
         preview_rows = []
         for _, emp in employees_df.iterrows():
-            emp_id = str(emp["emp_id"])
+            emp_id = str(emp.get("emp_id", "")).strip()
+            if not emp_id:
+                continue
+
             monthly_salary = float(emp.get("monthly_salary", 0) or 0)
             per_day_salary = monthly_salary / days_in_month if days_in_month else 0
 
-            emp_att = attendance_df[attendance_df["emp_id"].astype(str) == emp_id].copy()
+            emp_att = attendance_df[attendance_df.get("emp_id", pd.Series(dtype=str)).astype(str) == emp_id].copy()
             if not emp_att.empty and "attendance_date" in emp_att.columns:
                 emp_att["attendance_date"] = pd.to_datetime(emp_att["attendance_date"], errors="coerce")
                 emp_att = emp_att[
