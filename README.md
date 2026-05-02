@@ -614,3 +614,22 @@ Fixed:
 - Clicking Tech → Database Health → Seed Supabase from CSV now shows a persistent success/error message.
 - Removed immediate rerun after seed/export so confirmation does not disappear.
 - Added visible current Supabase row-count summary for key tables.
+
+
+# V70 Balloon Confirmations
+
+Updated confirmation behavior:
+- Major success / completion messages now use balloon-style indication consistently.
+- `set_confirmation()` now defaults to balloon celebration.
+- Balloon flag is reset cleanly after rendering.
+- Database Health seed/export confirmations also use balloon-style feedback.
+- Persistent DB health success message shows balloons; failures do not.
+
+
+# V71 Seed Action Result Panel
+
+Fixed:
+- Seed Supabase from CSV now shows an unmistakable result panel after click.
+- Result panel includes action name, status, timestamp, message, row counts before and after.
+- Uses explicit button keys.
+- Uses rerun only after saving the result into session state so the result remains visible.

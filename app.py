@@ -399,10 +399,9 @@ def show_confirmation_area():
             except Exception:
                 pass
 
-def set_confirmation(message, celebrate=False):
+def set_confirmation(message, celebrate=True):
     st.session_state.confirmation_message = message
-    if celebrate:
-        st.session_state.celebrate_success = True
+    st.session_state.celebrate_success = bool(celebrate)
 
 def safe_float(value, default=0.0):
     try:
@@ -3448,6 +3447,50 @@ def employees_page():
         st.rerun()
 
 
+
+def show_db_action_result_panel():
+    """Large visible result panel for database actions."""
+    result = st.session_state.get("last_db_action_result")
+    if not result:
+        return
+
+    status = str(result.get("status", ""))
+    action = str(result.get("action", "Database Action"))
+    ts = str(result.get("timestamp", ""))
+    message = str(result.get("message", ""))
+
+    if status == "success":
+        st.success(f"✅ {action} completed successfully")
+        try:
+            st.balloons()
+        except Exception:
+            pass
+    else:
+        st.error(f"❌ {action} failed")
+
+    st.markdown(
+        f"""
+        <div style="border:2px solid #0B4F71;border-radius:16px;padding:14px 16px;margin:10px 0;background:#F7FBFD;color:#172033;">
+            <div style="font-weight:900;font-size:18px;margin-bottom:6px;">Last Database Action Result</div>
+            <div><b>Action:</b> {action}</div>
+            <div><b>Status:</b> {status}</div>
+            <div><b>Time:</b> {ts}</div>
+            <div><b>Message:</b> {message}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    before = result.get("before_counts")
+    after = result.get("after_counts")
+    if before is not None:
+        st.markdown("##### Row counts before action")
+        st.dataframe(pd.DataFrame(before), use_container_width=True)
+    if after is not None:
+        st.markdown("##### Row counts after action")
+        st.dataframe(pd.DataFrame(after), use_container_width=True)
+
+
 def database_health_panel():
     st.markdown("### Database Health")
     st.info("V68 safety change: the app no longer creates Supabase tables during startup. Run SUPABASE_SCHEMA_RUN_ONCE.sql once in Supabase SQL Editor, then click Seed Supabase from CSV.")
@@ -3459,39 +3502,83 @@ def database_health_panel():
     else:
         st.error(f"Storage Mode: {status}")
 
-    if st.session_state.get("db_health_message"):
-        st.success(st.session_state.db_health_message)
-        st.caption("This message confirms the last database action completed.")
-        try:
-            st.balloons()
-        except Exception:
-            pass
+    show_db_action_result_panel()
+
+    st.markdown("#### Database Actions")
+    st.caption("Click a button below. The result will appear immediately in a large panel above and row counts below.")
 
     c1, c2, c3 = st.columns(3)
-    if c1.button("Refresh DB Health", use_container_width=True):
+
+    if c1.button("Refresh DB Health", use_container_width=True, key="db_refresh_button"):
+        st.session_state.last_db_action_result = {
+            "action": "Refresh DB Health",
+            "status": "success",
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "message": "Database health refreshed.",
+            "before_counts": None,
+            "after_counts": get_db_row_counts().to_dict("records"),
+        }
         st.rerun()
-    if c2.button("Seed Supabase from CSV", use_container_width=True):
+
+    if c2.button("Seed Supabase from CSV", use_container_width=True, key="db_seed_button"):
+        before_counts = get_db_row_counts().to_dict("records")
         try:
             msg = seed_supabase_from_csv(overwrite=True)
+            after_counts = get_db_row_counts().to_dict("records")
             add_audit(st.session_state.user["email"], "SEED_SUPABASE_FROM_CSV", msg)
             st.session_state.db_health_message = msg
+            st.session_state.last_db_action_result = {
+                "action": "Seed Supabase from CSV",
+                "status": "success" if "success" in str(msg).lower() else "failed",
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "message": msg,
+                "before_counts": before_counts,
+                "after_counts": after_counts,
+            }
             set_confirmation(msg, celebrate=True)
-            st.success(msg)
-            st.toast("Supabase seed completed.", icon="✅")
+            st.rerun()
         except Exception as e:
+            after_counts = get_db_row_counts().to_dict("records")
             st.session_state.db_health_message = f"Seed failed: {e}"
-            st.error(f"Seed failed: {e}")
-    if c3.button("Export Supabase to CSV", use_container_width=True):
+            st.session_state.last_db_action_result = {
+                "action": "Seed Supabase from CSV",
+                "status": "failed",
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "message": str(e),
+                "before_counts": before_counts,
+                "after_counts": after_counts,
+            }
+            st.rerun()
+
+    if c3.button("Export Supabase to CSV", use_container_width=True, key="db_export_button"):
+        before_counts = get_db_row_counts().to_dict("records")
         try:
             msg = export_supabase_to_csv()
+            after_counts = get_db_row_counts().to_dict("records")
             add_audit(st.session_state.user["email"], "EXPORT_SUPABASE_TO_CSV", msg)
             st.session_state.db_health_message = msg
+            st.session_state.last_db_action_result = {
+                "action": "Export Supabase to CSV",
+                "status": "success" if "success" in str(msg).lower() else "failed",
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "message": msg,
+                "before_counts": before_counts,
+                "after_counts": after_counts,
+            }
             set_confirmation(msg, celebrate=True)
-            st.success(msg)
-            st.toast("Supabase export completed.", icon="✅")
+            st.rerun()
         except Exception as e:
+            after_counts = get_db_row_counts().to_dict("records")
             st.session_state.db_health_message = f"Export failed: {e}"
-            st.error(f"Export failed: {e}")
+            st.session_state.last_db_action_result = {
+                "action": "Export Supabase to CSV",
+                "status": "failed",
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "message": str(e),
+                "before_counts": before_counts,
+                "after_counts": after_counts,
+            }
+            st.rerun()
 
     counts = get_csv_row_counts().merge(get_db_row_counts(), on="Table", how="outer")
     st.markdown("#### Row Count Validation")
