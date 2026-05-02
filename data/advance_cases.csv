@@ -1,0 +1,7 @@
+Advance_ID,Emp_ID,Advance_Date,Amount_Given,Refund_Start_Month,First_Month_Deduction,Remaining_Months,Status,Remarks,Created_By,Timestamp
+ADV-APR-GUDIYA,E_Gudiya,2026-04-01,3000,Apr-2026,3000,0,Open,April salary deduction only,admin@sms.local,2026-04-01T09:00:00
+ADV-APR-ASHA,E_Asha,2026-04-01,500,Apr-2026,500,0,Open,April salary deduction only,admin@sms.local,2026-04-01T09:00:00
+ADV-APR-POOJA,E_Pooja,2026-04-01,2000,Apr-2026,2000,0,Open,April salary deduction only,admin@sms.local,2026-04-01T09:00:00
+ADV-APR-KIRAN,E_Kiran,2026-04-01,2000,Apr-2026,2000,0,Open,April salary deduction only,admin@sms.local,2026-04-01T09:00:00
+ADV-APR-RIYA,E_Riya,2026-04-01,800,Apr-2026,800,0,Open,April salary deduction only,admin@sms.local,2026-04-01T09:00:00
+ADV-APR-SUNITA,E_Sunita,2026-04-01,500,Apr-2026,500,0,Open,April salary deduction only,admin@sms.local,2026-04-01T09:00:00

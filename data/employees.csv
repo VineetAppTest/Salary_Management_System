@@ -1,0 +1,8 @@
+Emp_ID,Name,Level,Monthly_Salary,Extra_Paid_Leaves,Status,Supervisor_Email
+E_Gudiya,Gudiya,L1,9200,0,Active,supervisor@sms.local
+E_Asha,Asha,L1,10000,0,Active,supervisor@sms.local
+E_Pooja,Pooja,L1,8000,0,Active,supervisor@sms.local
+E_Kiran,Kiran,L1,8000,0,Active,supervisor@sms.local
+E_Riya,Riya,L1,4500,0,Active,supervisor@sms.local
+E_Sunita,Sunita,L1,8000,0,Active,supervisor@sms.local
+E_Faizan,Faizan,L2,16000,0,Active,supervisor@sms.local

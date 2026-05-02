@@ -1,0 +1,5 @@
+Date,Emp_ID,Leave_Type,Status,Remarks
+2026-04-01,E_Gudiya,Leave - Full Day,Approved,Sample full day leave
+2026-04-02,E_Asha,Leave - Half Day,Approved,Sample half day leave
+2026-04-03,E_Pooja,Leave - Uninformed,Approved,Sample uninformed leave
+2026-04-04,E_Kiran,Leave - Collaborative,Approved,Sample collaborative leave
