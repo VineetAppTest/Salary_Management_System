@@ -59,6 +59,14 @@ def get_database_url():
 def db_enabled():
     return bool(get_database_url())
 
+
+def db_schema_cache_key():
+    return "db_schema_ready_v73"
+
+def clear_db_schema_cache():
+    st.session_state.pop(db_schema_cache_key(), None)
+
+
 @st.cache_resource(show_spinner=False)
 def get_db_engine():
     db_url = get_database_url()
@@ -158,15 +166,15 @@ def check_db_table_columns(conn, name):
     return existing, missing
 
 def ensure_database_tables():
-    """Verify Supabase schema exists; do not create tables at runtime.
-
-    Reason: CREATE TABLE during Streamlit startup can timeout on Supabase.
-    Run SUPABASE_SCHEMA_RUN_ONCE.sql once in Supabase SQL Editor instead.
-    """
+    """Verify Supabase schema exists; cache success to reduce page slowness."""
     engine = get_db_engine()
     if engine is None:
         ensure_data_files_csv_only()
         return False
+
+    if st.session_state.get(db_schema_cache_key()) is True:
+        return True
+
     ensure_data_files_csv_only()
     try:
         missing_tables = []
@@ -186,10 +194,14 @@ def ensure_database_tables():
                 f"Missing tables: {', '.join(missing_tables) if missing_tables else 'None'}. "
                 f"Missing columns: {' | '.join(missing_columns) if missing_columns else 'None'}."
             )
+            st.session_state[db_schema_cache_key()] = False
             return False
+
+        st.session_state[db_schema_cache_key()] = True
         return True
     except Exception as e:
         st.warning(f"Database connection issue. Using CSV fallback for this session. Details: {e}")
+        st.session_state[db_schema_cache_key()] = False
         return False
 
 def read_table_db(name):
@@ -1549,6 +1561,38 @@ def apply_theme():
             background: #FFFFFF !important;
             color: #172033 !important;
         }}
+    }}
+
+
+    /* V73 Database Health UX polish */
+    .db-health-shell {{
+        border: 1px solid #D8E3EA;
+        border-radius: 18px;
+        padding: 14px 16px;
+        background: #FFFFFF;
+        box-shadow: 0 2px 10px rgba(11,79,113,0.06);
+        margin-bottom: 12px;
+    }}
+    .db-health-title {{
+        font-weight: 900;
+        font-size: 18px;
+        color: #083A54;
+        margin-bottom: 8px;
+    }}
+    .db-status-pill {{
+        display: inline-block;
+        padding: 7px 11px;
+        border-radius: 999px;
+        font-weight: 800;
+        margin-bottom: 8px;
+    }}
+    .db-ok {{ background: #EAF7EF; color: #1F7A4D; border: 1px solid #BFE6CC; }}
+    .db-warn {{ background: #FFF8E8; color: #B7791F; border: 1px solid #F3D38B; }}
+    .db-danger {{ background: #FFF1F1; color: #B42318; border: 1px solid #F2B8B5; }}
+    .db-health-help {{
+        font-size: 13px;
+        color: #52616F;
+        margin-top: 4px;
     }}
 
     </style>
@@ -3476,7 +3520,7 @@ def employees_page():
 
 
 def show_db_action_result_panel():
-    """Large visible result panel for database actions."""
+    """Large visible result panel for database actions. Balloons trigger once per action."""
     result = st.session_state.get("last_db_action_result")
     if not result:
         return
@@ -3485,19 +3529,24 @@ def show_db_action_result_panel():
     action = str(result.get("action", "Database Action"))
     ts = str(result.get("timestamp", ""))
     message = str(result.get("message", ""))
+    result_id = f"{action}|{ts}|{status}"
 
     if status == "success":
         st.success(f"✅ {action} completed successfully")
-        try:
-            st.balloons()
-        except Exception:
-            pass
+        if st.session_state.get("last_balloon_result_id") != result_id:
+            try:
+                st.balloons()
+            except Exception:
+                pass
+            st.session_state.last_balloon_result_id = result_id
     else:
         st.error(f"❌ {action} failed")
 
+    border = "#1F7A4D" if status == "success" else "#B42318"
+    bg = "#F2FBF6" if status == "success" else "#FFF5F5"
     st.markdown(
         f"""
-        <div style="border:2px solid #0B4F71;border-radius:16px;padding:14px 16px;margin:10px 0;background:#F7FBFD;color:#172033;">
+        <div style="border:2px solid {border};border-radius:16px;padding:14px 16px;margin:10px 0;background:{bg};color:#172033;">
             <div style="font-weight:900;font-size:18px;margin-bottom:6px;">Last Database Action Result</div>
             <div><b>Action:</b> {action}</div>
             <div><b>Status:</b> {status}</div>
@@ -3510,63 +3559,42 @@ def show_db_action_result_panel():
 
     before = result.get("before_counts")
     after = result.get("after_counts")
-    if before is not None:
-        st.markdown("##### Row counts before action")
-        st.dataframe(pd.DataFrame(before), use_container_width=True)
-    if after is not None:
-        st.markdown("##### Row counts after action")
-        st.dataframe(pd.DataFrame(after), use_container_width=True)
+    if before is not None or after is not None:
+        with st.expander("View row counts before/after", expanded=False):
+            if before is not None:
+                st.markdown("##### Before")
+                st.dataframe(pd.DataFrame(before), use_container_width=True)
+            if after is not None:
+                st.markdown("##### After")
+                st.dataframe(pd.DataFrame(after), use_container_width=True)
 
 
 def database_health_panel():
     st.markdown("### Database Health")
-    st.info("If Seed fails due to old Supabase indexes/schema, click Reset SMS Tables once, then click Seed Supabase from CSV. This affects only sms_* tables.")
     status = db_connection_status_text()
-    if "connected" in status.lower():
-        st.success(f"Storage Mode: {status}")
-    elif "fallback" in status.lower():
-        st.warning(f"Storage Mode: {status}")
-    else:
-        st.error(f"Storage Mode: {status}")
+
+    status_class = "db-ok" if "connected" in status.lower() else ("db-warn" if "fallback" in status.lower() else "db-danger")
+    st.markdown(
+        f"""
+        <div class="db-health-shell">
+            <div class="db-health-title">Storage Status</div>
+            <div class="db-status-pill {status_class}">{status}</div>
+            <div class="db-health-help">
+                Use this page only for setup, seeding, backup and troubleshooting. Normal payroll work should be done from Admin/Supervisor pages.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     show_db_action_result_panel()
 
     st.markdown("#### Database Actions")
-    st.caption("Click a button below. The result will appear immediately in a large panel above and row counts below.")
+    st.caption("For day-to-day use, you should not need Reset or Seed again. Use Refresh to check row counts.")
 
-    c1, c2, c3, c4 = st.columns(4)
-
-    if c4.button("Reset SMS Tables", use_container_width=True, key="db_reset_tables_button", help="Use only if seed fails due to old Supabase indexes/schema. Drops and recreates only sms_* tables."):
-        before_counts = get_db_row_counts().to_dict("records")
-        try:
-            msg = reset_supabase_sms_tables()
-            after_counts = get_db_row_counts().to_dict("records")
-            add_audit(st.session_state.user["email"], "RESET_SUPABASE_SMS_TABLES", msg)
-            st.session_state.db_health_message = msg
-            st.session_state.last_db_action_result = {
-                "action": "Reset SMS Tables",
-                "status": "success" if "success" in str(msg).lower() else "failed",
-                "timestamp": datetime.now().isoformat(timespec="seconds"),
-                "message": msg,
-                "before_counts": before_counts,
-                "after_counts": after_counts,
-            }
-            set_confirmation(msg, celebrate=True)
-            st.rerun()
-        except Exception as e:
-            after_counts = get_db_row_counts().to_dict("records")
-            st.session_state.db_health_message = f"Reset failed: {e}"
-            st.session_state.last_db_action_result = {
-                "action": "Reset SMS Tables",
-                "status": "failed",
-                "timestamp": datetime.now().isoformat(timespec="seconds"),
-                "message": str(e),
-                "before_counts": before_counts,
-                "after_counts": after_counts,
-            }
-            st.rerun()
-
-    if c1.button("Refresh DB Health", use_container_width=True, key="db_refresh_button"):
+    c1, c2, c3 = st.columns(3)
+    if c1.button("Refresh DB Health", use_container_width=True, key="db_refresh_button", type="secondary"):
+        clear_db_schema_cache()
         st.session_state.last_db_action_result = {
             "action": "Refresh DB Health",
             "status": "success",
@@ -3577,10 +3605,11 @@ def database_health_panel():
         }
         st.rerun()
 
-    if c2.button("Seed Supabase from CSV", use_container_width=True, key="db_seed_button"):
+    if c2.button("Seed Supabase from CSV", use_container_width=True, key="db_seed_button", type="primary"):
         before_counts = get_db_row_counts().to_dict("records")
         try:
             msg = seed_supabase_from_csv(overwrite=True)
+            clear_db_schema_cache()
             after_counts = get_db_row_counts().to_dict("records")
             add_audit(st.session_state.user["email"], "SEED_SUPABASE_FROM_CSV", msg)
             st.session_state.db_health_message = msg
@@ -3592,7 +3621,6 @@ def database_health_panel():
                 "before_counts": before_counts,
                 "after_counts": after_counts,
             }
-            set_confirmation(msg, celebrate=True)
             st.rerun()
         except Exception as e:
             after_counts = get_db_row_counts().to_dict("records")
@@ -3607,7 +3635,7 @@ def database_health_panel():
             }
             st.rerun()
 
-    if c3.button("Export Supabase to CSV", use_container_width=True, key="db_export_button"):
+    if c3.button("Export Supabase to CSV", use_container_width=True, key="db_export_button", type="secondary"):
         before_counts = get_db_row_counts().to_dict("records")
         try:
             msg = export_supabase_to_csv()
@@ -3622,7 +3650,6 @@ def database_health_panel():
                 "before_counts": before_counts,
                 "after_counts": after_counts,
             }
-            set_confirmation(msg, celebrate=True)
             st.rerun()
         except Exception as e:
             after_counts = get_db_row_counts().to_dict("records")
@@ -3637,8 +3664,41 @@ def database_health_panel():
             }
             st.rerun()
 
-    counts = get_csv_row_counts().merge(get_db_row_counts(), on="Table", how="outer")
+    with st.expander("Danger Zone: Reset SMS Tables", expanded=False):
+        st.warning("Use this only if seeding fails due to old Supabase indexes/schema. This drops and recreates only sms_* tables.")
+        confirm_reset = st.checkbox("I understand this will reset only SMS Supabase tables", key="confirm_db_reset")
+        if st.button("Reset SMS Tables", use_container_width=True, key="db_reset_tables_button", type="secondary", disabled=not confirm_reset):
+            before_counts = get_db_row_counts().to_dict("records")
+            try:
+                msg = reset_supabase_sms_tables()
+                clear_db_schema_cache()
+                after_counts = get_db_row_counts().to_dict("records")
+                add_audit(st.session_state.user["email"], "RESET_SUPABASE_SMS_TABLES", msg)
+                st.session_state.db_health_message = msg
+                st.session_state.last_db_action_result = {
+                    "action": "Reset SMS Tables",
+                    "status": "success" if "success" in str(msg).lower() else "failed",
+                    "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    "message": msg,
+                    "before_counts": before_counts,
+                    "after_counts": after_counts,
+                }
+                st.rerun()
+            except Exception as e:
+                after_counts = get_db_row_counts().to_dict("records")
+                st.session_state.db_health_message = f"Reset failed: {e}"
+                st.session_state.last_db_action_result = {
+                    "action": "Reset SMS Tables",
+                    "status": "failed",
+                    "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    "message": str(e),
+                    "before_counts": before_counts,
+                    "after_counts": after_counts,
+                }
+                st.rerun()
+
     st.markdown("#### Row Count Validation")
+    counts = get_csv_row_counts().merge(get_db_row_counts(), on="Table", how="outer")
     st.dataframe(counts, use_container_width=True)
 
     try:
@@ -3666,11 +3726,10 @@ def database_health_panel():
     st.markdown("#### Functional Parity Minimum Checks")
     st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
-    st.markdown("#### Schema Alignment")
-    st.dataframe(get_schema_alignment_report(), use_container_width=True)
+    with st.expander("Schema Alignment", expanded=False):
+        st.dataframe(get_schema_alignment_report(), use_container_width=True)
 
-    st.info("This is the full V63 app with Supabase added behind the existing data functions. If row counts are correct, test Payroll and Salary Summary.")
-
+    st.info("Performance note: Supabase is slower than local CSV because every read/write goes over the internet. V73 caches schema checks to reduce repeated delays.")
 
 def tech_page():
     st.subheader("Tech Utilities")
