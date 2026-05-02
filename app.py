@@ -12,6 +12,7 @@ IMPORTANT:
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 from typing import Any, Optional
@@ -38,6 +39,65 @@ EMPLOYEE_CSV = DATA_DIR / "employees.csv"
 ATTENDANCE_CSV = DATA_DIR / "attendance.csv"
 
 # -----------------------------------------------------------------------------
+# Null-character / text sanitization helpers
+# -----------------------------------------------------------------------------
+
+def remove_null_characters(value: Any) -> Any:
+    """
+    Removes real and encoded null characters from strings.
+
+    Why this exists:
+    - Python/psycopg2 raises "embedded null character" when a text value contains \x00.
+    - Sometimes the bad value is not visible on screen.
+    - Sometimes it appears URL-encoded as %00 inside DATABASE_URL.
+    """
+    if isinstance(value, str):
+        cleaned = value.replace("\x00", "")
+        cleaned = cleaned.replace("\\x00", "")
+        cleaned = cleaned.replace("\\0", "")
+        cleaned = re.sub(r"%00", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"%2500", "", cleaned, flags=re.IGNORECASE)
+        return cleaned.strip()
+
+    return value
+
+
+def clean_text_value(value: Any) -> Any:
+    """Safely cleans user-entered text without changing numbers/dates/booleans."""
+    if pd.isna(value) if not isinstance(value, (list, dict, tuple, set)) else False:
+        return ""
+    if isinstance(value, str):
+        return remove_null_characters(value)
+    return value
+
+
+def clean_sql_params(params: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Clean SQL parameters before passing them to psycopg2."""
+    if not params:
+        return {}
+
+    cleaned: dict[str, Any] = {}
+    for key, value in params.items():
+        cleaned_key = str(remove_null_characters(key))
+        if isinstance(value, str):
+            cleaned[cleaned_key] = remove_null_characters(value)
+        else:
+            cleaned[cleaned_key] = value
+    return cleaned
+
+
+def clean_dataframe_values(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove hidden null characters from all object/string columns in a dataframe."""
+    if df is None or df.empty:
+        return df
+
+    cleaned = df.copy()
+    for col in cleaned.columns:
+        if cleaned[col].dtype == "object" or str(cleaned[col].dtype).startswith("string"):
+            cleaned[col] = cleaned[col].map(clean_text_value)
+    return cleaned
+
+# -----------------------------------------------------------------------------
 # Supabase / SQLAlchemy connection helpers
 # -----------------------------------------------------------------------------
 
@@ -57,7 +117,7 @@ def get_database_url() -> str:
     except Exception:
         db_url = os.getenv("DATABASE_URL", "")
 
-    db_url = str(db_url).replace("\x00", "").strip().strip('"').strip("'")
+    db_url = str(remove_null_characters(db_url)).strip().strip('"').strip("'")
     return db_url
 
 
@@ -73,7 +133,7 @@ def normalize_database_url(raw_url: str) -> str:
     Returns:
       postgresql+psycopg2://...?sslmode=require
     """
-    url = str(raw_url or "").replace("\x00", "").strip().strip('"').strip("'")
+    url = str(remove_null_characters(raw_url or "")).strip().strip('"').strip("'")
 
     if not url:
         return ""
@@ -113,6 +173,7 @@ def show_db_debug() -> None:
                 "database": parsed.path.replace("/", ""),
                 "has_password": bool(parsed.password),
                 "contains_null_character": "\x00" in DATABASE_URL,
+                "contains_encoded_null_sequence": "%00" in DATABASE_URL.lower() or "%2500" in DATABASE_URL.lower(),
             }
         )
 
@@ -173,7 +234,7 @@ def run_sql(sql: str, params: Optional[dict[str, Any]] = None) -> None:
         raise RuntimeError("DATABASE_URL missing or database engine not created. Cannot run SQL.")
 
     with engine.begin() as conn:
-        conn.execute(text(sql), params or {})
+        conn.execute(text(sql), clean_sql_params(params))
 
 
 def read_sql_df(sql: str, params: Optional[dict[str, Any]] = None) -> pd.DataFrame:
@@ -182,7 +243,7 @@ def read_sql_df(sql: str, params: Optional[dict[str, Any]] = None) -> pd.DataFra
         raise RuntimeError("DATABASE_URL missing or database engine not created. Cannot read SQL.")
 
     with engine.connect() as conn:
-        return pd.read_sql_query(text(sql), conn, params=params or {})
+        return clean_dataframe_values(pd.read_sql_query(text(sql), conn, params=clean_sql_params(params)))
 
 
 # -----------------------------------------------------------------------------
@@ -342,7 +403,7 @@ def normalize_dataframe_columns(df: pd.DataFrame, expected_columns: list[str], t
     if df is None or df.empty:
         return pd.DataFrame(columns=expected_columns)
 
-    normalized = df.copy()
+    normalized = clean_dataframe_values(df.copy())
     normalized.columns = [clean_column_name(c) for c in normalized.columns]
 
     # If duplicate columns are created after normalization, keep the first non-null value.
@@ -569,8 +630,8 @@ with employee_tab:
                             updated_at = NOW();
                         """,
                         {
-                            "emp_id": emp_id.strip(),
-                            "employee_name": employee_name.strip(),
+                            "emp_id": remove_null_characters(emp_id),
+                            "employee_name": remove_null_characters(employee_name),
                             "level": level,
                             "monthly_salary": monthly_salary,
                             "paid_leave_quota": int(paid_leave_quota),
@@ -586,15 +647,15 @@ with employee_tab:
                 ensure_csv_files()
                 df = pd.read_csv(EMPLOYEE_CSV)
                 new_row = {
-                    "emp_id": emp_id.strip(),
-                    "employee_name": employee_name.strip(),
+                    "emp_id": remove_null_characters(emp_id),
+                    "employee_name": remove_null_characters(employee_name),
                     "level": level,
                     "monthly_salary": monthly_salary,
                     "paid_leave_quota": int(paid_leave_quota),
                     "active": bool(active),
                 }
                 df = normalize_dataframe_columns(df, EXPECTED_EMPLOYEE_COLUMNS, "employees")
-                df = df[df["emp_id"].astype(str) != emp_id.strip()]
+                df = df[df["emp_id"].astype(str) != remove_null_characters(emp_id)]
                 df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                 df.to_csv(EMPLOYEE_CSV, index=False)
                 st.success("Employee saved to local CSV fallback.")
@@ -606,7 +667,7 @@ with attendance_tab:
     st.subheader("Attendance Entry")
 
     employees_df = load_employees(connected)
-    employee_ids = employees_df.get("emp_id", pd.Series(dtype=str)).astype(str).str.strip().tolist() if not employees_df.empty else []
+    employee_ids = [remove_null_characters(x) for x in employees_df.get("emp_id", pd.Series(dtype=str)).astype(str).str.strip().tolist()] if not employees_df.empty else []
 
     if not employee_ids:
         st.info("Add employees first before entering attendance.")
@@ -652,11 +713,11 @@ with attendance_tab:
                         """,
                         {
                             "attendance_date": attendance_date,
-                            "emp_id": selected_emp_id,
-                            "status": status,
-                            "leave_type": leave_type,
-                            "supervisor": supervisor,
-                            "remarks": remarks,
+                            "emp_id": remove_null_characters(selected_emp_id),
+                            "status": remove_null_characters(status),
+                            "leave_type": remove_null_characters(leave_type) if leave_type else None,
+                            "supervisor": remove_null_characters(supervisor),
+                            "remarks": remove_null_characters(remarks),
                         },
                     )
                     st.success("Attendance saved to Supabase.")
@@ -669,14 +730,14 @@ with attendance_tab:
                 df = pd.read_csv(ATTENDANCE_CSV)
                 new_row = {
                     "attendance_date": str(attendance_date),
-                    "emp_id": selected_emp_id,
-                    "status": status,
-                    "leave_type": leave_type,
-                    "supervisor": supervisor,
-                    "remarks": remarks,
+                    "emp_id": remove_null_characters(selected_emp_id),
+                    "status": remove_null_characters(status),
+                    "leave_type": remove_null_characters(leave_type) if leave_type else None,
+                    "supervisor": remove_null_characters(supervisor),
+                    "remarks": remove_null_characters(remarks),
                 }
                 df = normalize_dataframe_columns(df, EXPECTED_ATTENDANCE_COLUMNS, "attendance")
-                df = df[~((df["attendance_date"].astype(str) == str(attendance_date)) & (df["emp_id"].astype(str) == selected_emp_id))]
+                df = df[~((df["attendance_date"].astype(str) == str(attendance_date)) & (df["emp_id"].astype(str) == remove_null_characters(selected_emp_id)))]
                 df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                 df.to_csv(ATTENDANCE_CSV, index=False)
                 st.success("Attendance saved to local CSV fallback.")
