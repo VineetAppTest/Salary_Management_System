@@ -33,6 +33,7 @@ st.set_page_config(
 )
 
 APP_NAME = "Salary Management System"
+APP_BUILD = "2026-05-03-status-banner-v5"
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 EMPLOYEE_CSV = DATA_DIR / "employees.csv"
@@ -179,10 +180,6 @@ def show_db_debug() -> None:
 
     except Exception as e:
         st.error(f"Could not parse DATABASE_URL safely: {e}")
-
-
-# Show safe debug details before trying to connect.
-show_db_debug()
 
 
 # Create SQLAlchemy engine BEFORE running any test query.
@@ -522,35 +519,43 @@ def load_attendance(use_db: bool) -> pd.DataFrame:
 # -----------------------------------------------------------------------------
 st.title(f"💼 {APP_NAME}")
 st.caption("Supabase PostgreSQL enabled with safe local CSV fallback.")
+st.caption(f"App build: {APP_BUILD}")
+
+with st.expander("Safe database debug details", expanded=False):
+    show_db_debug()
+
+st.subheader("Database Connection Status")
 
 # One authoritative database readiness check.
 # The app is considered Supabase-ready only when BOTH login and table setup work.
-connected, db_message = test_database_connection()
+with st.spinner("Checking Supabase login and preparing SMS tables..."):
+    connected, db_message = test_database_connection()
+
+    if connected:
+        try:
+            initialize_sms_tables()
+            db_message = "Supabase login and SMS table setup completed successfully."
+        except Exception as exc:
+            connected = False
+            db_message = (
+                "Supabase login worked, but SMS table setup failed. This can happen if the database user "
+                "does not have table-create permissions, the pooler password has not fully propagated yet, "
+                "or an older table has an incompatible structure.\n\n"
+                f"Raw error:\n{exc}"
+            )
 
 if connected:
-    try:
-        initialize_sms_tables()
-        db_message = "Supabase login and SMS table setup completed successfully."
-    except Exception as exc:
-        connected = False
-        db_message = (
-            "Supabase login/table setup failed. The first connection test may have passed, "
-            "but table creation/repair could not complete. Most commonly this means the "
-            "DATABASE_URL password in Streamlit Secrets is still old/wrong, the password reset "
-            "has not propagated to the pooler yet, or the pooler URL was copied from a different project.\n\n"
-            f"Raw error:\n{exc}"
-        )
-
-if connected:
-    st.success("✅ Supabase database connected and SMS tables are ready.")
+    st.success("✅ LIVE MODE: Supabase database is connected and SMS tables are ready.")
+    st.info("You can now add employees, enter attendance, and preview payroll. Data should persist in Supabase.")
 else:
-    st.warning("⚠️ Database connection/setup issue. Falling back to local CSV for this session.")
-    with st.expander("Show database error details"):
+    st.error("⚠️ CSV FALLBACK MODE: Supabase is not ready for this session.")
+    st.warning("The app will still open, but data may be stored only in local CSV during this session.")
+    with st.expander("Show database error details", expanded=True):
         st.code(db_message)
     st.info(
         "If the error says 'password authentication failed for user postgres', reset the Supabase "
-        "database password, update Streamlit Secrets, save, and reboot the app. Do not use your "
-        "Supabase login password, API anon key, service role key, or GitHub password."
+        "database password, update Streamlit Secrets, save, wait 2-5 minutes, and reboot the app. "
+        "Do not use your Supabase login password, API anon key, service role key, or GitHub password."
     )
 
 # Sidebar controls
