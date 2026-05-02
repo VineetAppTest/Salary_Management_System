@@ -33,6 +33,29 @@ def test_database_connection():
 from urllib.parse import urlparse
 import streamlit as st
 
+from sqlalchemy import text
+
+def test_database_connection():
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT current_database(), current_user;"))
+            row = result.fetchone()
+
+        st.success("✅ Supabase connected successfully.")
+        st.write({
+            "database": row[0],
+            "user": row[1],
+        })
+        return True
+
+    except Exception as e:
+        st.error("❌ Supabase connection failed.")
+        st.exception(e)
+        return False
+
+db_ok = test_database_connection()
+
+
 def show_db_debug():
     try:
         raw_url = str(st.secrets.get("DATABASE_URL", "")).replace("\x00", "").strip()
