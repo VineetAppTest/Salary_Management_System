@@ -1,12 +1,12 @@
 """
 Salary Management System - Streamlit app.py
-Supabase PostgreSQL + SQLAlchemy connection fixed for Streamlit Cloud.
+Salary Management System with Supabase PostgreSQL persistence and CSV fallback.
 
 IMPORTANT:
 1. Do NOT hardcode your real password in this file.
 2. Put DATABASE_URL in Streamlit Cloud Secrets or local .streamlit/secrets.toml.
-3. Current troubleshooting URL format uses Supabase Session Pooler:
-   DATABASE_URL = "postgresql+psycopg2://postgres.YOUR_PROJECT_REF:YOUR_ENCODED_PASSWORD@aws-1-ap-south-1.pooler.supabase.com:5432/postgres?sslmode=require"
+3. Recommended Streamlit Secret format:
+   DATABASE_URL = "postgresql+psycopg2://postgres.YOUR_PROJECT_REF:YOUR_DATABASE_PASSWORD@POOLER_HOST:5432/postgres?sslmode=require"
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from urllib.parse import urlparse
 from typing import Any, Optional
 
 import pandas as pd
@@ -33,7 +32,6 @@ st.set_page_config(
 )
 
 APP_NAME = "Salary Management System"
-APP_BUILD = "2026-05-03-status-banner-v5"
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 EMPLOYEE_CSV = DATA_DIR / "employees.csv"
@@ -156,31 +154,6 @@ def normalize_database_url(raw_url: str) -> str:
 DATABASE_URL = normalize_database_url(get_database_url())
 
 
-def show_db_debug() -> None:
-    """
-    Shows safe database details without exposing password.
-    Temporary debugging only. Remove this after Supabase is confirmed working.
-    """
-    try:
-        parsed = urlparse(DATABASE_URL)
-
-        st.info("Database debug details")
-        st.write(
-            {
-                "scheme": parsed.scheme,
-                "username": parsed.username,
-                "host": parsed.hostname,
-                "port": parsed.port,
-                "database": parsed.path.replace("/", ""),
-                "has_password": bool(parsed.password),
-                "contains_null_character": "\x00" in DATABASE_URL,
-                "contains_encoded_null_sequence": "%00" in DATABASE_URL.lower() or "%2500" in DATABASE_URL.lower(),
-            }
-        )
-
-    except Exception as e:
-        st.error(f"Could not parse DATABASE_URL safely: {e}")
-
 
 # Create SQLAlchemy engine BEFORE running any test query.
 engine: Optional[Engine] = None
@@ -204,10 +177,9 @@ else:
     st.warning("DATABASE_URL is missing. App will use local CSV fallback.")
 
 
-def test_database_connection() -> tuple[bool, str]:
+def check_database_connection() -> tuple[bool, str]:
     """
-    Tests actual Supabase database connection.
-    Returns status and message for the app fallback logic.
+    Checks whether Supabase is reachable and returns status/message for fallback logic.
     """
     if engine is None:
         return False, "Database engine was not created. Check DATABASE_URL in Streamlit Secrets."
@@ -519,44 +491,25 @@ def load_attendance(use_db: bool) -> pd.DataFrame:
 # -----------------------------------------------------------------------------
 st.title(f"💼 {APP_NAME}")
 st.caption("Supabase PostgreSQL enabled with safe local CSV fallback.")
-st.caption(f"App build: {APP_BUILD}")
 
-with st.expander("Safe database debug details", expanded=False):
-    show_db_debug()
+# Prepare database once at startup.
+# The app uses Supabase only when both login and table setup are successful.
+connected, db_message = check_database_connection()
 
-st.subheader("Database Connection Status")
-
-# One authoritative database readiness check.
-# The app is considered Supabase-ready only when BOTH login and table setup work.
-with st.spinner("Checking Supabase login and preparing SMS tables..."):
-    connected, db_message = test_database_connection()
-
-    if connected:
-        try:
-            initialize_sms_tables()
-            db_message = "Supabase login and SMS table setup completed successfully."
-        except Exception as exc:
-            connected = False
-            db_message = (
-                "Supabase login worked, but SMS table setup failed. This can happen if the database user "
-                "does not have table-create permissions, the pooler password has not fully propagated yet, "
-                "or an older table has an incompatible structure.\n\n"
-                f"Raw error:\n{exc}"
-            )
+if connected:
+    try:
+        initialize_sms_tables()
+        db_message = "Supabase login and SMS table setup completed successfully."
+    except Exception as exc:
+        connected = False
+        db_message = f"Supabase login worked, but SMS table setup failed. Raw error: {exc}"
 
 if connected:
     st.success("✅ LIVE MODE: Supabase database is connected and SMS tables are ready.")
-    st.info("You can now add employees, enter attendance, and preview payroll. Data should persist in Supabase.")
 else:
-    st.error("⚠️ CSV FALLBACK MODE: Supabase is not ready for this session.")
-    st.warning("The app will still open, but data may be stored only in local CSV during this session.")
-    with st.expander("Show database error details", expanded=True):
+    st.warning("⚠️ CSV FALLBACK MODE: Supabase is not ready for this session.")
+    with st.expander("Database error details"):
         st.code(db_message)
-    st.info(
-        "If the error says 'password authentication failed for user postgres', reset the Supabase "
-        "database password, update Streamlit Secrets, save, wait 2-5 minutes, and reboot the app. "
-        "Do not use your Supabase login password, API anon key, service role key, or GitHub password."
-    )
 
 # Sidebar controls
 with st.sidebar:
@@ -597,8 +550,8 @@ with home_tab:
         st.metric("Current Storage", "Supabase" if connected else "CSV")
 
     st.info(
-        "If this page shows 'Supabase database connected', your SQLAlchemy connection is working. "
-        "You can now connect the rest of your Salary Management System pages to the same engine functions."
+        "Use the Employee Master tab to add staff, Attendance tab to enter leave/attendance, "
+        "and Payroll Preview tab to review salary impact for the selected month."
     )
 
 with employee_tab:
