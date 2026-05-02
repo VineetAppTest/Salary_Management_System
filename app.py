@@ -131,35 +131,62 @@ def read_table_csv(name):
 def write_table_csv(name, df):
     normalize_required_columns(name, df).to_csv(file_path(name), index=False)
 
-def create_db_table_if_needed(conn, name):
+def check_db_table_exists(conn, name):
     table = db_table_name(name)
-    cols = REQUIRED_FILES[name]
-    col_sql = ", ".join([f'"{c}" TEXT' for c in cols])
-    conn.execute(text(f'CREATE TABLE IF NOT EXISTS "{table}" ({col_sql})'))
-    existing = [r[0] for r in conn.execute(text("""
-        SELECT column_name FROM information_schema.columns
-        WHERE table_name = :table_name
-    """), {"table_name": table}).fetchall()]
-    for col in cols:
-        if col not in existing:
-            conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{col}" TEXT'))
+    exists = conn.execute(text("""
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+            AND table_name = :table_name
+        )
+    """), {"table_name": table}).scalar()
+    return bool(exists)
+
+def check_db_table_columns(conn, name):
+    table = db_table_name(name)
+    existing = [
+        row[0] for row in conn.execute(text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+            AND table_name = :table_name
+        """), {"table_name": table}).fetchall()
+    ]
+    required = REQUIRED_FILES[name]
+    missing = [c for c in required if c not in existing]
+    return existing, missing
 
 def ensure_database_tables():
+    """Verify Supabase schema exists; do not create tables at runtime.
+
+    Reason: CREATE TABLE during Streamlit startup can timeout on Supabase.
+    Run SUPABASE_SCHEMA_RUN_ONCE.sql once in Supabase SQL Editor instead.
+    """
     engine = get_db_engine()
     if engine is None:
         ensure_data_files_csv_only()
         return False
     ensure_data_files_csv_only()
     try:
+        missing_tables = []
+        missing_columns = []
         with engine.begin() as conn:
             for name in REQUIRED_FILES:
-                create_db_table_if_needed(conn, name)
-                table = db_table_name(name)
-                count = conn.execute(text(f'SELECT COUNT(*) FROM "{table}"')).scalar()
-                if int(count or 0) == 0:
-                    seed = read_table_csv(name)
-                    if not seed.empty:
-                        normalize_required_columns(name, seed).astype(str).to_sql(table, engine, if_exists="append", index=False)
+                if not check_db_table_exists(conn, name):
+                    missing_tables.append(db_table_name(name))
+                    continue
+                _, missing = check_db_table_columns(conn, name)
+                if missing:
+                    missing_columns.append(f"{db_table_name(name)}: {', '.join(missing)}")
+        if missing_tables or missing_columns:
+            st.warning(
+                "Supabase schema is not ready. Using CSV fallback. "
+                "Run SUPABASE_SCHEMA_RUN_ONCE.sql in Supabase SQL Editor. "
+                f"Missing tables: {', '.join(missing_tables) if missing_tables else 'None'}. "
+                f"Missing columns: {' | '.join(missing_columns) if missing_columns else 'None'}."
+            )
+            return False
         return True
     except Exception as e:
         st.warning(f"Database connection issue. Using CSV fallback for this session. Details: {e}")
@@ -189,7 +216,6 @@ def write_table_db(name, df):
             return
         table = db_table_name(name)
         with engine.begin() as conn:
-            create_db_table_if_needed(conn, name)
             conn.execute(text(f'DELETE FROM "{table}"'))
         if not df.empty:
             df.astype(str).to_sql(table, engine, if_exists="append", index=False)
@@ -258,11 +284,12 @@ def get_schema_alignment_report():
 def seed_supabase_from_csv(overwrite=True):
     if not db_enabled():
         return "DATABASE_URL not configured."
+    if not ensure_database_tables():
+        return "Supabase schema is not ready. Run SUPABASE_SCHEMA_RUN_ONCE.sql first, then retry seed."
     engine = get_db_engine()
     ensure_data_files_csv_only()
     with engine.begin() as conn:
         for name in REQUIRED_FILES:
-            create_db_table_if_needed(conn, name)
             table = db_table_name(name)
             if overwrite:
                 conn.execute(text(f'DELETE FROM "{table}"'))
@@ -3423,6 +3450,7 @@ def employees_page():
 
 def database_health_panel():
     st.markdown("### Database Health")
+    st.info("V68 safety change: the app no longer creates Supabase tables during startup. Run SUPABASE_SCHEMA_RUN_ONCE.sql once in Supabase SQL Editor, then click Seed Supabase from CSV.")
     status = db_connection_status_text()
     if "connected" in status.lower():
         st.success(f"Storage Mode: {status}")
