@@ -281,6 +281,28 @@ def get_schema_alignment_report():
         rows.append({"Table": "connection", "Schema Status": f"Error: {e}", "Missing Columns": "", "Extra Columns": ""})
     return pd.DataFrame(rows)
 
+
+def reset_supabase_sms_tables():
+    """Drop/recreate only SMS tables from the app.
+
+    Use only during setup when Supabase has old/bad schema or seed is blocked by old primary keys/indexes.
+    """
+    if not db_enabled():
+        return "DATABASE_URL not configured."
+    engine = get_db_engine()
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("SET LOCAL statement_timeout = '60000'"))
+        except Exception:
+            pass
+        for name in REQUIRED_FILES:
+            conn.execute(text(f'DROP TABLE IF EXISTS "{db_table_name(name)}" CASCADE'))
+        for name, columns in REQUIRED_FILES.items():
+            col_sql = ", ".join([f'"{c}" TEXT' for c in columns])
+            conn.execute(text(f'CREATE TABLE "{db_table_name(name)}" ({col_sql})'))
+    return "Supabase SMS tables reset successfully. Now click Seed Supabase from CSV."
+
+
 def seed_supabase_from_csv(overwrite=True):
     if not db_enabled():
         return "DATABASE_URL not configured."
@@ -289,13 +311,18 @@ def seed_supabase_from_csv(overwrite=True):
     engine = get_db_engine()
     ensure_data_files_csv_only()
     with engine.begin() as conn:
+        try:
+            conn.execute(text("SET LOCAL statement_timeout = '60000'"))
+        except Exception:
+            pass
         for name in REQUIRED_FILES:
             table = db_table_name(name)
             if overwrite:
                 conn.execute(text(f'DELETE FROM "{table}"'))
             df = read_table_csv(name)
             if not df.empty:
-                df.astype(str).to_sql(table, engine, if_exists="append", index=False)
+                df = normalize_required_columns(name, df).astype(str)
+                df.to_sql(table, engine, if_exists="append", index=False, method="multi", chunksize=100)
     return "Supabase seeded from CSV successfully."
 
 def export_supabase_to_csv():
@@ -3493,7 +3520,7 @@ def show_db_action_result_panel():
 
 def database_health_panel():
     st.markdown("### Database Health")
-    st.info("V68 safety change: the app no longer creates Supabase tables during startup. Run SUPABASE_SCHEMA_RUN_ONCE.sql once in Supabase SQL Editor, then click Seed Supabase from CSV.")
+    st.info("If Seed fails due to old Supabase indexes/schema, click Reset SMS Tables once, then click Seed Supabase from CSV. This affects only sms_* tables.")
     status = db_connection_status_text()
     if "connected" in status.lower():
         st.success(f"Storage Mode: {status}")
@@ -3507,7 +3534,37 @@ def database_health_panel():
     st.markdown("#### Database Actions")
     st.caption("Click a button below. The result will appear immediately in a large panel above and row counts below.")
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
+
+    if c4.button("Reset SMS Tables", use_container_width=True, key="db_reset_tables_button", help="Use only if seed fails due to old Supabase indexes/schema. Drops and recreates only sms_* tables."):
+        before_counts = get_db_row_counts().to_dict("records")
+        try:
+            msg = reset_supabase_sms_tables()
+            after_counts = get_db_row_counts().to_dict("records")
+            add_audit(st.session_state.user["email"], "RESET_SUPABASE_SMS_TABLES", msg)
+            st.session_state.db_health_message = msg
+            st.session_state.last_db_action_result = {
+                "action": "Reset SMS Tables",
+                "status": "success" if "success" in str(msg).lower() else "failed",
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "message": msg,
+                "before_counts": before_counts,
+                "after_counts": after_counts,
+            }
+            set_confirmation(msg, celebrate=True)
+            st.rerun()
+        except Exception as e:
+            after_counts = get_db_row_counts().to_dict("records")
+            st.session_state.db_health_message = f"Reset failed: {e}"
+            st.session_state.last_db_action_result = {
+                "action": "Reset SMS Tables",
+                "status": "failed",
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "message": str(e),
+                "before_counts": before_counts,
+                "after_counts": after_counts,
+            }
+            st.rerun()
 
     if c1.button("Refresh DB Health", use_container_width=True, key="db_refresh_button"):
         st.session_state.last_db_action_result = {
