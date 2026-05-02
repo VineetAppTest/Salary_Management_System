@@ -608,8 +608,21 @@ Notes:
 - Payroll rows are intentionally not pre-generated; generate payroll inside the app after deployment/testing.
 
 
-# V65 Supabase Import Fix
+# V66 Supabase Functional Parity
 
-Fixed:
-- Added missing `import os` required by Supabase DATABASE_URL / SUPABASE_DB_URL environment lookup.
-- Resolves NameError: name 'os' is not defined.
+Built from:
+- V63 stable with updated data.
+
+Added:
+- Supabase PostgreSQL persistence.
+- CSV fallback.
+- Safe delete+insert writes without dropping table schema.
+- Database Health tab under Tech.
+- Row-count validation.
+- Schema alignment report.
+- Seed Supabase from CSV button.
+- Export Supabase to CSV button.
+- Supabase setup guide and secrets example.
+
+Acceptance target:
+- Same functionality as V63, with persistent Supabase data.
