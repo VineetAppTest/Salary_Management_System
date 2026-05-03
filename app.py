@@ -226,15 +226,14 @@ def read_table_db(name):
         if cache_key in st.session_state:
             return st.session_state[cache_key].copy()
 
-        if not ensure_database_tables():
-            return read_table_csv(name)
-
-        df = pd.read_sql_table(db_table_name(name), engine)
+        # Fast path: no schema scan here. Schema health is handled only in Tech → Database Health.
+        table = db_table_name(name)
+        df = pd.read_sql_query(f'SELECT * FROM "{table}"', engine)
         df = normalize_required_columns(name, df)
         st.session_state[cache_key] = df.copy()
         return df.copy()
     except Exception as e:
-        st.warning(f"Could not read {name} from Supabase. Using CSV fallback. Details: {e}")
+        st.session_state["last_db_runtime_issue"] = f"Could not read {name} from Supabase. CSV fallback used."
         return read_table_csv(name)
 
 def write_table_db(name, df):
@@ -244,9 +243,7 @@ def write_table_db(name, df):
         return
     df = normalize_required_columns(name, df)
     try:
-        if not ensure_database_tables():
-            write_table_csv(name, df)
-            return
+        # Fast path: no schema scan here. If schema is broken, the action fails and falls back.
         table = db_table_name(name)
         with engine.begin() as conn:
             try:
@@ -258,7 +255,7 @@ def write_table_db(name, df):
             df.astype(str).to_sql(table, engine, if_exists="append", index=False, method="multi", chunksize=100)
         st.session_state[db_table_cache_key(name)] = df.copy()
     except Exception as e:
-        st.error(f"Could not write {name} to Supabase. Saved to CSV fallback only. Details: {e}")
+        st.session_state["last_db_runtime_issue"] = f"Could not write {name} to Supabase. CSV fallback used."
         write_table_csv(name, df)
         clear_db_table_cache(name)
 
@@ -386,10 +383,9 @@ def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 def ensure_data_files():
-    if db_enabled():
-        ensure_database_tables()
-    else:
-        ensure_data_files_csv_only()
+    # Performance rule: app startup must never perform Supabase schema checks.
+    # Supabase is accessed only when a table is actually read/written.
+    ensure_data_files_csv_only()
 
 def read_table(name):
     if db_enabled():
@@ -464,10 +460,6 @@ def show_confirmation_area():
         st.success(msg)
         if celebrate:
             st.balloons()
-            try:
-                st.toast("Action completed successfully.", icon="✅")
-            except Exception:
-                pass
 
 def set_confirmation(message, celebrate=True):
     st.session_state.confirmation_message = message
@@ -841,9 +833,21 @@ def build_mobile_salary_summary(month_value):
 
     return pd.DataFrame(rows)
 def add_audit(user, action, details):
-    df = read_table("audit_log")
-    df.loc[len(df)] = [datetime.now().isoformat(timespec="seconds"), user, action, details]
-    write_table("audit_log", df)
+    # Performance rule: do not let audit logging block UI actions such as login/navigation.
+    lightweight_actions = {
+        "SINGLE_LOGIN", "ROLE_SELECTED", "LOGOUT", "LOGOUT_FROM_ROLE_SELECTION",
+        "PAGE_NAVIGATION", "DOWNLOAD"
+    }
+    if str(action) in lightweight_actions:
+        return
+
+    try:
+        df = read_table("audit_log")
+        df.loc[len(df)] = [datetime.now().isoformat(timespec="seconds"), user, action, details]
+        write_table("audit_log", df)
+    except Exception:
+        # Audit should never break or slow the user's core workflow.
+        pass
 
 def add_clean_log(area, issue, action, record_key):
     df = read_table("cleansing_log")
@@ -1663,7 +1667,6 @@ def login_screen():
             st.session_state.user = None
             st.session_state.access_role = None
             st.session_state.page = "Role Selection"
-            add_audit(email, "SINGLE_LOGIN", "Successful login")
             st.rerun()
         else:
             st.error("Invalid credentials or inactive user.")
@@ -1706,7 +1709,6 @@ def role_selection_page():
                 }
                 st.session_state.access_role = role_key
                 st.session_state.page = "Tech" if role_key == "Tech" else "Dashboard"
-                add_audit(auth_user["email"], "ROLE_SELECTED", f"{role_key} role selected")
                 st.rerun()
 
     st.divider()
@@ -2222,18 +2224,38 @@ def calculate_payroll(year, month, special_config=None):
     payroll_df = reconcile_payroll_month(month_label(year, month), payroll_df)
     return payroll_df, pd.DataFrame(logs)
 
+
+def is_demo_mode():
+    return bool(st.session_state.get("demo_mode", False))
+
+def demo_mode_panel(location=""):
+    c1, c2 = st.columns([2.6, 1])
+    with c1:
+        if is_demo_mode():
+            st.success("Demo Mode is ON — technical clutter is hidden and business-friendly guidance is shown.")
+        else:
+            st.caption("Demo Mode is OFF — full operational details remain available.")
+    with c2:
+        st.toggle("Demo Mode", key="demo_mode", help="Turn ON during client walkthroughs to simplify screens and hide technical noise.")
+
+def show_demo_tip(message):
+    if is_demo_mode():
+        st.info(message)
+
+
 def page_navigation():
     user = st.session_state.user
     auth_user = st.session_state.get("auth_user", user)
+    demo_badge = " &nbsp;&nbsp; | &nbsp;&nbsp; <b>Demo Mode:</b> ON" if is_demo_mode() else ""
     st.markdown(
-        f"<div class='top-nav'><b>Logged in:</b> {auth_user.get('name', user['name'])} &nbsp;&nbsp; | &nbsp;&nbsp; <b>Current Role:</b> {user['role']}</div>",
+        f"<div class='top-nav'><b>Logged in:</b> {auth_user.get('name', user['name'])} &nbsp;&nbsp; | &nbsp;&nbsp; <b>Current Role:</b> {user['role']}{demo_badge}</div>",
         unsafe_allow_html=True
     )
 
     if user["role"] == "Supervisor":
         pages = ["Dashboard"]
     elif user["role"] == "Admin":
-        pages = ["Dashboard", "Salary Summary", "Leave", "Holiday", "Advance", "Payroll", "Payroll Approval", "Employee Profile", "Employees", "Logs"]
+        pages = ["Dashboard", "Payroll Control Centre", "Salary Summary", "Leave", "Holiday", "Advance", "Payroll", "Payroll Approval", "Employee Profile", "Employees", "Logs"]
     else:
         pages = ["Tech", "Bulk Leave Upload", "System Health"]
 
@@ -2409,10 +2431,129 @@ def quick_advance_form():
         st.rerun()
 
 
+
+def BACKUP_DIR():
+    p = APP_DIR / "backups"
+    p.mkdir(exist_ok=True)
+    return p
+
+def backup_table(name, label="backup"):
+    """Create a timestamped CSV backup of a table and return backup path."""
+    try:
+        df = read_table(name)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = BACKUP_DIR() / f"{name}_{label}_{ts}.csv"
+        df.to_csv(path, index=False)
+        return str(path)
+    except Exception as e:
+        return f"Backup failed for {name}: {e}"
+
+def month_readiness(month_value):
+    employees = read_table("employees")
+    leaves = read_table("leave_entries")
+    cases = read_table("advance_cases")
+    schedule = read_table("advance_schedule")
+    payroll = normalize_payroll_columns(read_table("payroll_items"))
+
+    active = employees[employees["Status"].astype(str).str.lower() == "active"] if (not employees.empty and "Status" in employees.columns) else employees
+    yr, mon = parse_month_label(str(month_value))
+    start_dt = pd.Timestamp(year=yr, month=mon, day=1)
+    end_dt = pd.Timestamp(year=yr, month=mon, day=calendar.monthrange(yr, mon)[1])
+
+    leaves_in_month = pd.DataFrame()
+    if not leaves.empty and "Date" in leaves.columns:
+        temp = leaves.copy()
+        temp["Date_dt"] = parse_app_date_series(temp["Date"])
+        leaves_in_month = temp[(temp["Date_dt"] >= start_dt) & (temp["Date_dt"] <= end_dt)]
+
+    schedule_in_month = schedule[schedule["Deduction_Month"].astype(str) == str(month_value)] if (not schedule.empty and "Deduction_Month" in schedule.columns) else pd.DataFrame()
+    payroll_in_month = payroll[payroll["Month"].astype(str) == str(month_value)] if (not payroll.empty and "Month" in payroll.columns) else pd.DataFrame()
+
+    locked = False
+    if not payroll_in_month.empty and "Locked" in payroll_in_month.columns:
+        locked = payroll_in_month["Locked"].astype(str).str.lower().isin(["true", "1", "yes"]).any()
+
+    return {
+        "month": month_value,
+        "active_employees": len(active),
+        "leave_rows": len(leaves_in_month),
+        "advance_cases": len(cases),
+        "advance_schedule_rows": len(schedule_in_month),
+        "payroll_rows": len(payroll_in_month),
+        "payroll_generated": len(payroll_in_month) > 0,
+        "locked": locked,
+        "storage": "Supabase" if db_enabled() else "CSV",
+    }
+
+def readiness_status(value, target=1):
+    try:
+        return "Done" if int(value) >= target else "Pending"
+    except Exception:
+        return "Pending"
+
+def render_month_readiness(month_value):
+    info = month_readiness(month_value)
+    st.markdown("#### Month Readiness Check")
+    cols = st.columns(5)
+    cards = [
+        ("Employees", info["active_employees"], "Done" if info["active_employees"] > 0 else "Pending"),
+        ("Leaves", info["leave_rows"], "Done" if info["leave_rows"] > 0 else "No leaves"),
+        ("Advance schedules", info["advance_schedule_rows"], "Done" if info["advance_schedule_rows"] > 0 else "No schedules"),
+        ("Payroll", info["payroll_rows"], "Done" if info["payroll_generated"] else "Pending"),
+        ("Locked", "Yes" if info["locked"] else "No", "Locked" if info["locked"] else "Open"),
+    ]
+    for col, (label, value, status) in zip(cols, cards):
+        col.metric(label, value, status)
+    st.caption(f"Storage: {info['storage']} | Month: {month_value}")
+    return info
+
+def payroll_control_centre_page():
+    st.subheader("Payroll Control Centre")
+    demo_mode_panel("payroll_control_centre")
+    st.caption("One guided place to check monthly readiness, run payroll, review salary and approve when ready.")
+    show_demo_tip("Recommended demo flow: verify readiness → generate payroll → review salary summary → approve/lock.")
+
+    today = date.today()
+    c1, c2 = st.columns(2)
+    year = c1.number_input("Year", min_value=2020, max_value=2100, value=today.year, step=1, key="pcc_year")
+    month = c2.selectbox("Month", list(range(1, 13)), index=today.month - 1, format_func=lambda m: calendar.month_name[m], key="pcc_month")
+    selected_month = month_label(int(year), int(month))
+
+    info = render_month_readiness(selected_month)
+
+    st.markdown("#### Guided Monthly Flow")
+    flow = [
+        ("1. Employees Ready", "Active employee master available", "Employees", info["active_employees"] > 0),
+        ("2. Leaves Uploaded", "Leave rows detected for selected month", "Leave", info["leave_rows"] > 0),
+        ("3. Advances Ready", "Advance schedule rows detected for selected month", "Advance", info["advance_schedule_rows"] > 0),
+        ("4. Payroll Calculated", "Payroll rows available for selected month", "Payroll", info["payroll_generated"]),
+        ("5. Review & Lock", "Approve payroll after review", "Payroll Approval", info["locked"]),
+    ]
+    for title, desc, go_page, done in flow:
+        c_status, c_text, c_action = st.columns([0.8, 3, 1.2])
+        c_status.markdown("✅" if done else "⚠️")
+        c_text.markdown(f"**{title}**  \n{desc}")
+        if c_action.button(f"Go to {go_page}", key=f"pcc_go_{go_page}", use_container_width=True):
+            st.session_state.page = go_page
+            st.rerun()
+
+def explain_salary_row(row):
+    name = row.get("Name", row.get("Emp_ID", "Employee"))
+    total = row.get("Total Pay", row.get("Monthly_Salary", ""))
+    daily = row.get("Daily Wage", row.get("Daily_Wage", ""))
+    leaves = row.get("Leaves Taken", row.get("Leave_Units", ""))
+    leave_cost = row.get("Leave Deduction Cost", row.get("Leave_Deduction_Cost", ""))
+    adv_ded = row.get("Deduction for the Month", row.get("Advance_Deduction", ""))
+    net = row.get("Net Salary to be Paid", row.get("Final_Salary_With_Special", ""))
+    return f"{name}: Total Pay {total}, Daily Wage {daily}, Leaves Taken {leaves}, Leave Deduction {leave_cost}, Advance Deduction {adv_ded}, Net Salary {net}."
+
+
 def dashboard_page():
     if st.session_state.user["role"] == "Supervisor":
         supervisor_dashboard_page()
         return
+    demo_mode_panel("dashboard")
+    show_demo_tip("Client walkthrough tip: Start from Payroll Control Centre, then open Salary Summary for the final business view.")
     employees = read_table("employees")
     leaves = read_table("leave_entries")
     schedules = read_table("advance_schedule")
@@ -2429,6 +2570,13 @@ def dashboard_page():
     else:
         total = 0
     c4.metric("Latest Payroll Total", f"₹{total:,.0f}")
+
+    st.subheader("Client Confidence View")
+    current_month = month_label(date.today().year, date.today().month)
+    render_month_readiness(current_month)
+    if st.button("Open Payroll Control Centre", use_container_width=True, type="primary"):
+        st.session_state.page = "Payroll Control Centre"
+        st.rerun()
 
     st.subheader("Recent Leave Updates")
     st.dataframe(leaves.tail(8), use_container_width=True)
@@ -2464,6 +2612,18 @@ def bulk_leave_upload_page():
     if st.session_state.get("bulk_upload_message"):
         st.success(st.session_state.bulk_upload_message)
         st.caption("Completion animation was triggered after upload. If your browser blocks animations, this message confirms completion.")
+        if st.session_state.get("last_bulk_leave_backup_path"):
+            st.info(f"Backup available for undo: {st.session_state.last_bulk_leave_backup_path}")
+            if st.button("Undo Last Bulk Upload", use_container_width=True, key="undo_last_bulk_upload"):
+                try:
+                    backup_df = pd.read_csv(st.session_state.last_bulk_leave_backup_path)
+                    write_table("leave_entries", backup_df)
+                    msg = "Last bulk upload undone. Leave entries restored from backup."
+                    st.session_state.bulk_upload_message = msg
+                    set_confirmation(msg, celebrate=True)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Undo failed: {e}")
         if st.session_state.get("last_bulk_upload_summary"):
             st.markdown("#### Last saved upload summary")
             st.dataframe(pd.DataFrame(st.session_state.last_bulk_upload_summary), use_container_width=True, height=min(260, 80 + len(st.session_state.last_bulk_upload_summary) * 35))
@@ -2683,6 +2843,8 @@ def bulk_leave_upload_page():
 
         other_cols = [c for c in leave_df.columns if c not in preferred_cols]
         leave_df = leave_df[preferred_cols + other_cols]
+        backup_path = backup_table("leave_entries", "before_bulk_upload")
+        st.session_state.last_bulk_leave_backup_path = backup_path
         write_table("leave_entries", leave_df)
 
         # Critical: immediate re-read verification from disk/app storage.
@@ -3056,6 +3218,11 @@ def salary_summary_page():
     render_salary_summary_cards(summary)
     render_sticky_salary_table(summary)
 
+    with st.expander("Salary calculation explanation", expanded=False):
+        st.caption("Quick trust-building view for end users. Use this to explain why net salary is coming as shown.")
+        for _, row in summary.iterrows():
+            st.write("• " + explain_salary_row(row))
+
     with st.expander("Audit view / spreadsheet view"):
         st.caption("Use this only when you want a raw table for checking or audit. The app-style view above is the recommended daily view.")
         st.dataframe(summary, use_container_width=True, height=min(240, 70 + len(summary) * 28))
@@ -3089,6 +3256,10 @@ def payroll_page():
     st.info(f"Preview payroll can be calculated anytime. Before approval/lock, recalculate on or after {first_lock_allowed_date(int(year), int(month))}. Leaves detected for {selected_month}: {len(leaves_in_month)}.")
     if len(leaves_in_month) == 0 and len(leave_entries) > 0:
         st.warning("Leave file has rows, but none matched the selected month. Check date format in Leave Matching Diagnostics.")
+
+    readiness = render_month_readiness(selected_month)
+    if readiness["active_employees"] == 0:
+        st.error("No active employees found. Payroll should not be generated until employee master is ready.")
     with st.expander("Leave matching diagnostics"):
         diag = build_leave_match_diagnostics(selected_month)
         if diag.empty:
@@ -3608,6 +3779,9 @@ def show_db_action_result_panel():
 
 def database_health_panel():
     st.markdown("### Database Health")
+    if is_demo_mode():
+        st.info("Demo Mode is ON. Database setup details are hidden. Turn Demo Mode OFF from Tech → Demo Mode Guide to manage database health.")
+        return
     status = db_connection_status_text()
 
     status_class = "db-ok" if "connected" in status.lower() else ("db-warn" if "fallback" in status.lower() else "db-danger")
@@ -3617,7 +3791,7 @@ def database_health_panel():
             <div class="db-health-title">Storage Status</div>
             <div class="db-status-pill {status_class}">{status}</div>
             <div class="db-health-help">
-                Use this page only for setup, seeding, backup and troubleshooting. Normal payroll work should be done from Admin/Supervisor pages.
+                Use this page only when setting up or troubleshooting database storage.
             </div>
         </div>
         """,
@@ -3734,9 +3908,9 @@ def database_health_panel():
                 }
                 st.rerun()
 
-    st.markdown("#### Row Count Validation")
     counts = get_csv_row_counts().merge(get_db_row_counts(), on="Table", how="outer")
-    st.dataframe(counts, use_container_width=True)
+    with st.expander("Row Count Validation", expanded=True):
+        st.dataframe(counts, use_container_width=True)
 
     try:
         key_tables = ["employees", "leave_entries", "advance_cases", "advance_schedule", "users"]
@@ -3760,22 +3934,53 @@ def database_health_panel():
         if status_text == "Check" and str(csv_rows).isdigit() and int(csv_rows) >= exp and not str(db_rows).isdigit():
             status_text = "CSV OK / DB not active"
         rows.append({"Table": table, "Expected Minimum": exp, "CSV Rows": csv_rows, "DB Rows": db_rows, "Status": status_text})
-    st.markdown("#### Functional Parity Minimum Checks")
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    with st.expander("Functional Parity Minimum Checks", expanded=False):
+        st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
     with st.expander("Schema Alignment", expanded=False):
         st.dataframe(get_schema_alignment_report(), use_container_width=True)
 
-    st.info("Performance note: Supabase is slower than local CSV because every read/write goes over the internet. V73 caches schema checks to reduce repeated delays.")
+    st.caption("Performance mode is active: normal pages do not run database health checks.")
+
+
+def demo_mode_guide_panel():
+    st.markdown("### Demo Mode Guide")
+    st.write("Use Demo Mode during client walkthroughs when you want the app to look simpler and business-focused.")
+    st.markdown("""
+    **When Demo Mode is ON**
+    - Technical database messages are hidden.
+    - Business guidance messages are shown.
+    - Payroll Control Centre becomes the recommended starting point.
+    - Screens feel cleaner for end-user review.
+
+    **When Demo Mode is OFF**
+    - Tech users can see database health, seed/export/reset actions and troubleshooting details.
+    - Use OFF mode only during setup, admin checks or support.
+    """)
+    if st.button("Turn Demo Mode ON", use_container_width=True, key="demo_on_from_guide"):
+        st.session_state.demo_mode = True
+        set_confirmation("Demo Mode turned ON.", celebrate=True)
+        st.rerun()
+    if st.button("Turn Demo Mode OFF", use_container_width=True, key="demo_off_from_guide"):
+        st.session_state.demo_mode = False
+        set_confirmation("Demo Mode turned OFF.", celebrate=True)
+        st.rerun()
+
 
 def tech_page():
     st.subheader("Tech Utilities")
-    st.info(f"Storage mode: {db_connection_status_text()}")
+    demo_mode_panel("tech")
+    if not is_demo_mode():
+        st.info(f"Storage mode: {db_connection_status_text()}")
+        if st.session_state.get("last_db_runtime_issue"):
+            st.warning(st.session_state.last_db_runtime_issue)
+    else:
+        st.caption("Demo Mode hides technical database details. Turn OFF Demo Mode for setup/troubleshooting.")
     if st.session_state.user["role"] != "Tech":
         st.warning("Open the Tech role to access this page.")
         return
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Unified Advance Editor", "Users & Password", "Database Health", "System Notes"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Unified Advance Editor", "Users & Password", "Demo Mode Guide", "Database Health", "System Notes"])
 
     def build_case_schedule_from_inputs(advance_id, emp_id, amount, start_month_label, first_deduction, remaining_months, status):
         start_year, start_month = parse_month_label(start_month_label)
@@ -4100,9 +4305,12 @@ def tech_page():
                     st.rerun()
 
     with tab3:
-        database_health_panel()
+        demo_mode_guide_panel()
 
     with tab4:
+        database_health_panel()
+
+    with tab5:
         st.markdown("### Utility definitions")
         st.info("Advance ID is the single control point. Employee is locked after advance creation to protect data integrity.")
         st.info("Unified Advance Editor writes both advance_cases and advance_schedule together.")
@@ -4175,6 +4383,8 @@ def main():
     page = page_navigation()
     if page == "Dashboard":
         dashboard_page()
+    elif page == "Payroll Control Centre":
+        payroll_control_centre_page()
     elif page == "Salary Summary":
         salary_summary_page()
     elif page == "Leave":

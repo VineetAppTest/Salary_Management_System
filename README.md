@@ -682,3 +682,65 @@ Fixed:
 
 3. UX:
    - Reduced duplicate celebration/toast paths on bulk upload.
+
+
+# V75 Speed + Simplified UX Recovery
+
+Deal-breaker fixes:
+1. Startup no longer checks Supabase schema on every page load.
+2. Supabase read/write now uses fast path and session table cache.
+3. Login and role selection no longer wait for audit DB writes.
+4. Audit logging no longer blocks core UI actions.
+5. Database Health is simplified and heavy details are hidden in expanders.
+6. DB errors are no longer shown as long technical/code-like messages across normal pages.
+
+Important:
+- Supabase will always be slower than pure CSV because it uses internet/database calls.
+- This build prioritizes user adoption speed over excessive diagnostics on every page.
+
+
+# V76 Client Confidence Pack
+
+Built on V75 performance recovery.
+
+Added:
+1. Payroll Control Centre
+   - Guided monthly flow with Employees, Leaves, Advances, Payroll and Approval readiness.
+
+2. Month Readiness Check
+   - Active employees, leave rows, advance schedules, payroll rows and lock status.
+
+3. Salary Calculation Explanation
+   - Expandable employee-wise explanation in Salary Summary.
+
+4. Mobile Salary Cards retained/enhanced through the existing app-style Salary Summary.
+
+5. Bulk Upload Backup + Undo
+   - Creates backup before bulk leave upload.
+   - Adds Undo Last Bulk Upload action after upload.
+
+Goal:
+- Speed + clarity + confidence + recovery without adding new payroll rules.
+
+
+# V77 Demo Mode + User Manual Pack
+
+Added:
+1. Demo Mode toggle
+   - Available on Dashboard, Payroll Control Centre and Tech.
+   - Demo Mode ON hides technical database clutter and shows client-friendly guidance.
+   - Demo Mode OFF shows full operational and database details.
+
+2. Demo Mode Guide under Tech
+   - Explains when to use ON/OFF.
+   - Provides quick toggle buttons.
+
+3. User Manual
+   - `SMS_USER_MANUAL.md` included in package.
+   - Separate DOCX manual created for review:
+     `SMS_User_Manual_Supervisor_Admin_Tech.docx`
+
+Focus:
+- Better client demonstration
+- Clear role-wise user education
+- Reduced confusion for Supervisor/Admin/Tech users
