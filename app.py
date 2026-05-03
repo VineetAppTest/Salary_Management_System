@@ -67,6 +67,19 @@ def clear_db_schema_cache():
     st.session_state.pop(db_schema_cache_key(), None)
 
 
+def db_table_cache_key(name):
+    return f"db_table_cache_v74_{name}"
+
+def clear_db_table_cache(name=None):
+    if name:
+        st.session_state.pop(db_table_cache_key(name), None)
+    else:
+        for key in list(st.session_state.keys()):
+            if str(key).startswith("db_table_cache_v74_"):
+                st.session_state.pop(key, None)
+
+
+
 @st.cache_resource(show_spinner=False)
 def get_db_engine():
     db_url = get_database_url()
@@ -209,9 +222,17 @@ def read_table_db(name):
     if engine is None:
         return read_table_csv(name)
     try:
+        cache_key = db_table_cache_key(name)
+        if cache_key in st.session_state:
+            return st.session_state[cache_key].copy()
+
         if not ensure_database_tables():
             return read_table_csv(name)
-        return normalize_required_columns(name, pd.read_sql_table(db_table_name(name), engine))
+
+        df = pd.read_sql_table(db_table_name(name), engine)
+        df = normalize_required_columns(name, df)
+        st.session_state[cache_key] = df.copy()
+        return df.copy()
     except Exception as e:
         st.warning(f"Could not read {name} from Supabase. Using CSV fallback. Details: {e}")
         return read_table_csv(name)
@@ -228,12 +249,18 @@ def write_table_db(name, df):
             return
         table = db_table_name(name)
         with engine.begin() as conn:
+            try:
+                conn.execute(text("SET LOCAL statement_timeout = '60000'"))
+            except Exception:
+                pass
             conn.execute(text(f'DELETE FROM "{table}"'))
         if not df.empty:
-            df.astype(str).to_sql(table, engine, if_exists="append", index=False)
+            df.astype(str).to_sql(table, engine, if_exists="append", index=False, method="multi", chunksize=100)
+        st.session_state[db_table_cache_key(name)] = df.copy()
     except Exception as e:
         st.error(f"Could not write {name} to Supabase. Saved to CSV fallback only. Details: {e}")
         write_table_csv(name, df)
+        clear_db_table_cache(name)
 
 def db_connection_status_text():
     if not db_enabled():
@@ -312,6 +339,8 @@ def reset_supabase_sms_tables():
         for name, columns in REQUIRED_FILES.items():
             col_sql = ", ".join([f'"{c}" TEXT' for c in columns])
             conn.execute(text(f'CREATE TABLE "{db_table_name(name)}" ({col_sql})'))
+    clear_db_schema_cache()
+    clear_db_table_cache()
     return "Supabase SMS tables reset successfully. Now click Seed Supabase from CSV."
 
 
@@ -335,6 +364,7 @@ def seed_supabase_from_csv(overwrite=True):
             if not df.empty:
                 df = normalize_required_columns(name, df).astype(str)
                 df.to_sql(table, engine, if_exists="append", index=False, method="multi", chunksize=100)
+    clear_db_table_cache()
     return "Supabase seeded from CSV successfully."
 
 def export_supabase_to_csv():
@@ -345,6 +375,7 @@ def export_supabase_to_csv():
     for name in REQUIRED_FILES:
         df = pd.read_sql_table(db_table_name(name), engine)
         write_table_csv(name, normalize_required_columns(name, df))
+    clear_db_table_cache()
     return "Supabase exported to CSV successfully."
 
 
@@ -2485,53 +2516,71 @@ def bulk_leave_upload_page():
     total_uploaded = len(upload_df)
     st.info(f"Rows detected in uploaded file: {total_uploaded}")
 
+    upload_mode = st.radio(
+        "Upload mode",
+        ["Replace entire leave data for uploaded month", "Append / replace matching rows"],
+        horizontal=False,
+        index=0,
+        help="For demo and one-time migration, keep 'Replace entire leave data for uploaded month'. It ensures saved rows match the uploaded file for that month.",
+        key="bulk_upload_mode_v74"
+    )
+    st.warning("After validation, the final upload button appears directly below the validation summary. Large previews are collapsed to keep the page fast.")
+
     employees = read_table("employees")
     active_emp_ids = set(employees[employees["Status"].astype(str).str.lower() == "active"]["Emp_ID"].astype(str))
     valid_leave_types = set(LEAVE_UNITS.keys())
 
+    # Performance: read payroll lock data once instead of calling is_month_locked() for every uploaded row.
+    payroll_for_locks = normalize_payroll_columns(read_table("payroll_items"))
+    locked_months = set()
+    if not payroll_for_locks.empty and "Month" in payroll_for_locks.columns and "Locked" in payroll_for_locks.columns:
+        locked_rows = payroll_for_locks[payroll_for_locks["Locked"].astype(str).str.lower().isin(["true", "1", "yes"])]
+        locked_months = set(locked_rows["Month"].astype(str))
+
     clean_rows = []
     error_rows = []
 
-    for idx, row in upload_df.iterrows():
-        row_num = idx + 2
-        raw_date = row.get("Date", "")
-        emp_id = normalize_emp_id_value(row.get("Emp_ID", ""))
-        leave_type = normalize_leave_type(row.get("Leave_Type", ""))
-        status = str(row.get("Status", "")).strip() if not pd.isna(row.get("Status", "")) else "Approved"
-        remarks = "" if pd.isna(row.get("Remarks", "")) else str(row.get("Remarks", "")).strip()
+    with st.spinner("Validating uploaded file..."):
+        for idx, row in upload_df.iterrows():
+            row_num = idx + 2
+            raw_date = row.get("Date", "")
+            emp_id = normalize_emp_id_value(row.get("Emp_ID", ""))
+            leave_type = normalize_leave_type(row.get("Leave_Type", ""))
+            status = str(row.get("Status", "")).strip() if not pd.isna(row.get("Status", "")) else "Approved"
+            remarks = "" if pd.isna(row.get("Remarks", "")) else str(row.get("Remarks", "")).strip()
 
-        parsed_date = parse_app_date_value(raw_date)
-        if pd.isna(parsed_date):
-            error_rows.append({"Row": row_num, "Issue": "Invalid Date", "Value": raw_date})
-            continue
-        leave_date = parsed_date.date()
+            parsed_date = parse_app_date_value(raw_date)
+            if pd.isna(parsed_date):
+                error_rows.append({"Row": row_num, "Issue": "Invalid Date", "Value": raw_date})
+                continue
+            leave_date = parsed_date.date()
 
-        if emp_id not in active_emp_ids:
-            error_rows.append({"Row": row_num, "Issue": "Invalid or inactive Emp_ID", "Value": emp_id})
-            continue
+            if emp_id not in active_emp_ids:
+                error_rows.append({"Row": row_num, "Issue": "Invalid or inactive Emp_ID", "Value": emp_id})
+                continue
 
-        if leave_type not in valid_leave_types:
-            error_rows.append({"Row": row_num, "Issue": "Invalid Leave_Type", "Value": row.get("Leave_Type", "")})
-            continue
+            if leave_type not in valid_leave_types:
+                error_rows.append({"Row": row_num, "Issue": "Invalid Leave_Type", "Value": row.get("Leave_Type", "")})
+                continue
 
-        if leave_type == "Leave - Uninformed" and not remarks:
-            error_rows.append({"Row": row_num, "Issue": "Remarks mandatory for Uninformed Leave", "Value": emp_id})
-            continue
+            if leave_type == "Leave - Uninformed" and not remarks:
+                error_rows.append({"Row": row_num, "Issue": "Remarks mandatory for Uninformed Leave", "Value": emp_id})
+                continue
 
-        lock_month = month_label(leave_date.year, leave_date.month)
-        if is_month_locked(lock_month):
-            error_rows.append({"Row": row_num, "Issue": f"Month locked: {lock_month}", "Value": emp_id})
-            continue
+            lock_month = month_label(leave_date.year, leave_date.month)
+            if lock_month in locked_months:
+                error_rows.append({"Row": row_num, "Issue": f"Month locked: {lock_month}", "Value": emp_id})
+                continue
 
-        clean_rows.append({
-            "Date": str(leave_date),
-            "Emp_ID": emp_id,
-            "Leave_Type": leave_type,
-            "Status": status or "Approved",
-            "Remarks": remarks,
-            "Supervisor": st.session_state.user["email"],
-            "Timestamp": datetime.now().isoformat(timespec="seconds"),
-        })
+            clean_rows.append({
+                "Date": str(leave_date),
+                "Emp_ID": emp_id,
+                "Leave_Type": leave_type,
+                "Status": status or "Approved",
+                "Remarks": remarks,
+                "Supervisor": st.session_state.user["email"],
+                "Timestamp": datetime.now().isoformat(timespec="seconds"),
+            })
 
     st.markdown("#### Validation Result")
     c1, c2, c3 = st.columns(3)
@@ -2558,22 +2607,16 @@ def bulk_leave_upload_page():
         return
 
     clean_df = pd.DataFrame(clean_rows)
-    st.markdown("#### Preview of all valid rows")
     same_day_dupes = clean_df[clean_df.duplicated(["Date", "Emp_ID"], keep=False)]
     if not same_day_dupes.empty:
         st.warning(f"{len(same_day_dupes)} rows have the same Date + Emp_ID. They will still be saved in replace-month mode and not collapsed.")
-    st.dataframe(clean_df[["Date", "Emp_ID", "Leave_Type", "Status", "Remarks"]], use_container_width=True, height=360)
 
-    upload_mode = st.radio(
-        "Upload mode",
-        ["Replace entire leave data for uploaded month", "Append / replace matching rows"],
-        horizontal=False,
-        index=0,
-        help="For demo and one-time migration, keep 'Replace entire leave data for uploaded month'. It ensures saved rows match the uploaded file for that month."
-    )
+    with st.expander("Preview valid rows", expanded=False):
+        st.dataframe(clean_df[["Date", "Emp_ID", "Leave_Type", "Status", "Remarks"]], use_container_width=True, height=320)
+
     duplicate_policy = "Replace duplicates"
 
-    if st.button("Confirm Bulk Upload", use_container_width=True):
+    if st.button("✅ Confirm Bulk Upload Now", use_container_width=True, type="primary", key="confirm_bulk_upload_v74"):
         leave_df = read_table("leave_entries")
         preferred_cols = ["Date", "Emp_ID", "Leave_Type", "Remarks", "Supervisor", "Timestamp", "Status"]
 
@@ -2682,14 +2725,8 @@ def bulk_leave_upload_page():
         st.session_state.last_bulk_upload_summary = saved_summary.to_dict("records")
         add_audit(st.session_state.user["email"], "BULK_LEAVE_UPLOAD", msg)
         set_confirmation(msg, celebrate=True)
-        st.success(msg)
         st.markdown("#### Saved employee summary after upload")
         st.dataframe(saved_summary, use_container_width=True, height=min(260, 80 + len(saved_summary) * 35))
-        st.balloons()
-        try:
-            st.toast("Bulk upload completed and verified.", icon="✅")
-        except Exception:
-            pass
 
 
 def leave_page():
