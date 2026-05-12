@@ -1,0 +1,18 @@
+{
+  "app_py_files": [
+    "app.py",
+    "check_authlib.py"
+  ],
+  "old_app_removed": true,
+  "requirements_has_streamlit_auth": true,
+  "requirements_has_authlib": true,
+  "runtime_removed": true,
+  "info_schema_fixed": true,
+  "authlib_guard": true,
+  "v103_optional_password": true,
+  "no_delete_leave": true,
+  "no_delete_advance": true,
+  "compile_ok": true,
+  "compile_stderr": "",
+  "csv_required_columns_missing": {}
+}
