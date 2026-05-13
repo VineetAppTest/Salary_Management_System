@@ -35,7 +35,7 @@ LEAVE_UNITS = {
 
 
 BUILD_VERSION = "V115"
-BUILD_LABEL = "V115 · Section-First Redirect Layout"
+BUILD_LABEL = "V115.1 · Client Redirect Visibility Fix"
 NAV_SCROLL_ANCHOR = "ww-section-content-anchor"
 
 REQUIRED_FILES = {
@@ -2447,6 +2447,55 @@ def apply_theme():
         line-height: 1.2 !important;
         overflow-wrap: anywhere !important;
     }}
+    .ww-app-shell * {{
+        color: inherit !important;
+        max-width: 100% !important;
+    }}
+    .ww-app-shell {{
+        isolation: isolate !important;
+        min-height: 112px;
+    }}
+    .ww-action-focus {{
+        background: #F4FFF8;
+        border: 1px solid #B9E7C8;
+        border-left: 6px solid #1E8F4D;
+        color: #173B27;
+        border-radius: 16px;
+        padding: 12px 14px;
+        margin: 8px 0 12px 0;
+        box-shadow: 0 8px 20px rgba(24,37,31,.06);
+    }}
+    .ww-action-focus-title {{
+        font-weight: 950;
+        font-size: 14px;
+        margin-bottom: 2px;
+        color: #115C32;
+    }}
+    .ww-action-focus-text {{
+        font-size: 13px;
+        line-height: 1.38;
+        color: #244934;
+    }}
+    .ww-active-section-card {{
+        background: #FFFCF5;
+        border: 1px solid #E7DCC8;
+        border-left: 6px solid #B98A35;
+        border-radius: 16px;
+        padding: 11px 14px;
+        margin: 8px 0 10px 0;
+        box-shadow: 0 8px 20px rgba(24,37,31,.05);
+    }}
+    .ww-active-section-title {{
+        font-size: 15px;
+        font-weight: 950;
+        color: #172B22;
+        margin-bottom: 2px;
+    }}
+    .ww-active-section-note {{
+        color: #64746A;
+        font-size: 13px;
+        line-height: 1.35;
+    }}
     .ww-section-update-wrap {{
         display: flex;
         justify-content: center;
@@ -3710,6 +3759,8 @@ def render_nav_group(title, page_names, current_page, key_prefix):
             type="primary" if is_active else "secondary",
         ):
             st.session_state.page = page_name
+            st.session_state.nav_compact_after_selection = True
+            set_confirmation(f"Redirected to {page_name}. The selected section is loaded directly below — no scrolling required.", celebrate=False)
             set_action_focus(focus_message_for_page(page_name), page=page_name)
             st.session_state.scroll_target_note = f"You are now in {page_name}."
             st.rerun()
@@ -3739,27 +3790,48 @@ def page_navigation():
     if "page" not in st.session_state or st.session_state.page not in pages:
         st.session_state.page = pages[0]
 
-    st.markdown("<div class='nav-label'>Navigation</div>", unsafe_allow_html=True)
-    st.markdown(
-        "<div class='ww-nav-note'>Tap a section. WageWise will redirect to that section directly; no auto-scroll is used.</div>",
-        unsafe_allow_html=True,
-    )
+    def _render_full_navigation(key_suffix="main"):
+        if user["role"] == "Supervisor":
+            with st.container(border=True):
+                render_nav_group("Supervisor", nav_groups["Supervisor"], st.session_state.page, f"nav_supervisor_{key_suffix}")
+        else:
+            left_col, right_col = st.columns([1.0, 1.0], gap="medium")
+            with left_col:
+                with st.container(border=True):
+                    render_nav_group("Daily Work", nav_groups["Daily Work"], st.session_state.page, f"nav_{key_suffix}")
+                with st.container(border=True):
+                    render_nav_group("Payroll Flow", nav_groups["Payroll Flow"], st.session_state.page, f"nav_{key_suffix}")
+            with right_col:
+                with st.container(border=True):
+                    render_nav_group("Setup & Controls", nav_groups["Setup & Controls"], st.session_state.page, f"nav_{key_suffix}")
+                with st.container(border=True):
+                    render_nav_group("Recovery & Technical", nav_groups["Recovery & Technical"], st.session_state.page, f"nav_{key_suffix}")
 
-    if user["role"] == "Supervisor":
-        with st.container(border=True):
-            render_nav_group("Supervisor", nav_groups["Supervisor"], st.session_state.page, "nav_supervisor")
+    compact_nav = bool(st.session_state.get("nav_compact_after_selection"))
+    if compact_nav:
+        current_title, current_note = page_heading_text(st.session_state.page)
+        st.markdown(
+            f"""
+            <div class='ww-active-section-card'>
+                <div class='ww-active-section-title'>Loaded section: {current_title}</div>
+                <div class='ww-active-section-note'>The full navigation is collapsed so the selected section appears immediately below. Open “Change section” only when you need to move elsewhere.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        with st.expander("Change section", expanded=False):
+            st.markdown(
+                "<div class='ww-nav-note'>Choose another section. WageWise will redirect and keep the selected section visible without auto-scroll.</div>",
+                unsafe_allow_html=True,
+            )
+            _render_full_navigation("compact")
     else:
-        left_col, right_col = st.columns([1.0, 1.0], gap="medium")
-        with left_col:
-            with st.container(border=True):
-                render_nav_group("Daily Work", nav_groups["Daily Work"], st.session_state.page, "nav")
-            with st.container(border=True):
-                render_nav_group("Payroll Flow", nav_groups["Payroll Flow"], st.session_state.page, "nav")
-        with right_col:
-            with st.container(border=True):
-                render_nav_group("Setup & Controls", nav_groups["Setup & Controls"], st.session_state.page, "nav")
-            with st.container(border=True):
-                render_nav_group("Recovery & Technical", nav_groups["Recovery & Technical"], st.session_state.page, "nav")
+        st.markdown("<div class='nav-label'>Navigation</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='ww-nav-note'>Tap a section. WageWise will redirect to that section directly; no auto-scroll is used.</div>",
+            unsafe_allow_html=True,
+        )
+        _render_full_navigation("main")
 
     allowed_roles_for_login = user_allowed_roles(auth_user)
     show_switch_role = len(allowed_roles_for_login) > 1
@@ -6418,6 +6490,8 @@ def main():
     render_wagewise_header()
     show_confirmation_area()
     page = page_navigation()
+    if st.session_state.get("action_focus_message"):
+        show_action_focus()
     render_section_update(page)
     render_page_heading(page)
     render_selected_content_anchor()
@@ -6454,8 +6528,6 @@ def main():
 
     if st.session_state.get("scroll_target_note"):
         st.session_state.pop("scroll_target_note", None)
-    if st.session_state.get("action_focus_message"):
-        show_action_focus()
 
 if __name__ == "__main__":
     main()
