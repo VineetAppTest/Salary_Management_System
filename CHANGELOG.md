@@ -1572,3 +1572,7 @@ Retained:
 - OIDC login pattern.
 
 No payroll, leave, or advance calculation rule changes.
+
+## v116.3 - Mobile Salary Summary Month Selector Fix
+- Fixed issue where April could be missing/unselectable in Mobile Salary Summary after recalculation.
+- Salary Summary month dropdown now uses normalized, chronological month options across payroll, leave logs, advance schedules, and last recalculated month session state.

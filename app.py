@@ -3172,6 +3172,89 @@ def date_to_month_label(dt):
     return month_label(int(dt.year), int(dt.month))
 
 
+def normalize_month_label_value(value):
+    """Normalize month values to app format like Apr-2026.
+
+    Supports existing labels like Apr-2026, full month labels like April-2026,
+    date-like values, and Timestamp/date values. Returns blank when it cannot parse.
+    """
+    try:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return ""
+        if isinstance(value, (pd.Timestamp, datetime, date)):
+            return month_label(int(value.year), int(value.month))
+        s = str(value).strip()
+        if not s or s.lower() in ["nan", "nat", "none"]:
+            return ""
+        # Already in Apr-2026 format.
+        try:
+            y, m = parse_month_label(s)
+            return month_label(y, m)
+        except Exception:
+            pass
+        # Full month name format, e.g. April-2026.
+        if "-" in s:
+            left, right = s.split("-", 1)
+            left_clean = left.strip()
+            right_clean = right.strip()
+            for idx, full_name in enumerate(calendar.month_name):
+                if idx and left_clean.lower() == full_name.lower():
+                    return month_label(int(right_clean), idx)
+        parsed = pd.to_datetime(s, errors="coerce", dayfirst=True)
+        if not pd.isna(parsed):
+            return month_label(int(parsed.year), int(parsed.month))
+    except Exception:
+        return ""
+    return ""
+
+
+def month_sort_key(month_value):
+    """Chronological sort key for month labels; unknown labels go last."""
+    normalized = normalize_month_label_value(month_value)
+    try:
+        y, m = parse_month_label(normalized)
+        return (int(y), int(m), str(normalized))
+    except Exception:
+        return (9999, 99, str(month_value))
+
+
+def build_salary_summary_month_options(payroll=None):
+    """Build month dropdown options for Salary Summary.
+
+    Earlier versions only read payroll_items['Month']. If a month was recalculated
+    through profile/schedule flows but month labels varied or were available through
+    the linked logs/schedules first, April could disappear from the mobile summary
+    selector. This merges all trusted payroll-related month sources and normalizes
+    them before display.
+    """
+    months = []
+
+    def add_months_from_df(df, column):
+        try:
+            if df is not None and not df.empty and column in df.columns:
+                for value in df[column].dropna().astype(str).tolist():
+                    norm = normalize_month_label_value(value)
+                    if norm:
+                        months.append(norm)
+        except Exception:
+            pass
+
+    if payroll is None:
+        payroll = normalize_payroll_columns(read_table("payroll_items"))
+    add_months_from_df(payroll, "Month")
+    add_months_from_df(read_table("leave_adjustment_log"), "Month")
+    add_months_from_df(read_table("advance_schedule"), "Deduction_Month")
+
+    # Preserve a recently selected/recalculated month if present in session state.
+    for key in ["salary_summary_selected_month", "last_recalculated_month", "current_month"]:
+        norm = normalize_month_label_value(st.session_state.get(key, ""))
+        if norm:
+            months.append(norm)
+
+    unique = sorted(set([m for m in months if m]), key=month_sort_key)
+    return unique
+
+
 
 
 def apply_v116_1_backend_requested_actions():
@@ -5593,8 +5676,15 @@ def salary_summary_page():
         st.info("No payroll generated yet. Generate payroll first.")
         return
 
-    months = payroll["Month"].dropna().astype(str).unique().tolist()
-    selected_month = st.selectbox("Select month", months, index=len(months)-1)
+    months = build_salary_summary_month_options(payroll)
+    if not months:
+        st.info("No payroll month is available yet. Generate or recalculate payroll first.")
+        return
+
+    default_month = normalize_month_label_value(st.session_state.get("salary_summary_selected_month", ""))
+    default_index = months.index(default_month) if default_month in months else len(months) - 1
+    selected_month = st.selectbox("Select month", months, index=default_index, key="salary_summary_selected_month")
+    selected_month = normalize_month_label_value(selected_month) or selected_month
 
     reconciled_payroll = reconcile_payroll_month(selected_month, payroll)
     if len(reconciled_payroll) != len(payroll):
@@ -5680,6 +5770,8 @@ def payroll_page():
         payroll = normalize_payroll_columns(payroll)
         write_table("payroll_items", payroll)
         write_table("leave_adjustment_log", logs)
+        st.session_state.last_recalculated_month = selected_month
+        st.session_state.salary_summary_selected_month = selected_month
         add_audit(st.session_state.user["email"], "GENERATE_PAYROLL", selected_month)
         set_confirmation("Payroll calculated after month-end rule check. Admin can now review individual profiles and recalculate if needed.", celebrate=True)
         st.rerun()
@@ -6008,6 +6100,8 @@ def employee_profile_page():
             leave_log = pd.concat([leave_log, pd.DataFrame(logs)], ignore_index=True)
         write_table("leave_adjustment_log", leave_log)
 
+        st.session_state.last_recalculated_month = selected_month
+        st.session_state.salary_summary_selected_month = selected_month
         add_audit(st.session_state.user["email"], "RECALCULATE_EMPLOYEE_PAYROLL", f"{selected_month} {selected_emp}")
         set_confirmation("Employee payroll recalculated and all relevant elements updated.", celebrate=True)
         st.rerun()
