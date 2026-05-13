@@ -1,0 +1,68 @@
+name: Keep WageWise Awake
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Runs every 6 hours at minute 15
+    - cron: '15 */6 * * *'
+
+jobs:
+  wake:
+    name: Wake Streamlit app with browser
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Playwright
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install chromium --with-deps
+
+      - name: Open WageWise in headless browser
+        env:
+          APP_URL: "https://salarymanagementsystembyme.streamlit.app/"
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          const appUrl = process.env.APP_URL;
+
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage();
+
+            console.log(`Opening: ${appUrl}`);
+            await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+
+            // If Streamlit shows the sleep screen, click the wake-up button.
+            const wakeTextOptions = [
+              'Yes, get this app back up',
+              'Get this app back up',
+              'Wake up',
+              'Yes'
+            ];
+
+            for (const text of wakeTextOptions) {
+              const button = page.getByText(text, { exact: false });
+              if (await button.count().catch(() => 0)) {
+                console.log(`Wake prompt found. Clicking: ${text}`);
+                await button.first().click().catch(() => {});
+                break;
+              }
+            }
+
+            // Wait for the app shell / login UI to load.
+            await page.waitForTimeout(45000);
+
+            const title = await page.title().catch(() => '');
+            const body = await page.locator('body').innerText({ timeout: 10000 }).catch(() => '');
+            console.log(`Page title: ${title}`);
+            console.log(`Body preview: ${body.slice(0, 500)}`);
+
+            await browser.close();
+            console.log(`Wake check completed at ${new Date().toISOString()}`);
+          })().catch((err) => {
+            console.error(err);
+            process.exit(0); // Do not fail the workflow for transient Streamlit cold starts.
+          });
+          NODE
