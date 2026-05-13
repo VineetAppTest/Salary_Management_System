@@ -1166,3 +1166,63 @@ Fix:
 - Login hero/card spacing reduced on phone.
 - Fallback/support login remains hidden under expander.
 - No payroll/leave/advance calculation changes.
+
+
+# WageWise V107 Go-Live Stability + Recovery Build
+
+Built on V106.
+
+Fixes and improvements:
+1. Login
+   - Removed 3-step cards from desktop and mobile.
+   - Login screen loads faster by not running data/table setup before showing login.
+
+2. Navigation and UX
+   - Active navigation button uses visible primary styling.
+   - Adds inline section guidance after navigation instead of relying only on top-right toast.
+   - Navigation spacing tightened for better balance.
+
+3. Form completion behaviour
+   - Users & Access create/update keeps user on Users & Access and shows a clear inline note.
+   - More form-specific reset work can be added after testing exact pages, but this build prevents the known Users & Access -> Advance Master confusion.
+
+4. Advance data-loss protection
+   - Critical tables are backed up before guarded writes.
+   - Unsafe empty writes are blocked if the table already had data.
+   - This specifically protects advance_cases and advance_schedule from accidental full wipe.
+
+5. Recovery
+   - Added Section Rollback panel:
+     Setup & Controls → Recovery
+   - Restore only one selected section from backup without resetting the entire app.
+
+6. Technical checks
+   - Technical checks are now separated under a dedicated tab.
+
+Team Go-Live recommendation:
+- Keep physical delete disabled for payroll-critical data.
+- Use Cancel/Inactive statuses with audit.
+- Keep OIDC as primary login.
+- Test Recovery rollback once before client Go-Live.
+- Export Supabase tables before the first client live payroll run.
+
+No payroll/leave/advance calculation rule changes.
+
+
+# WageWise V108 Auto Jump to Selected Section
+
+Built on V107.
+
+Fix:
+- Navigation clicks now set an auto-jump flag.
+- After Streamlit reruns, the app places a selected-section anchor before page content.
+- A small browser script attempts to smooth-scroll to the selected content area.
+- Users & Access create/update also keeps context and attempts to jump back to the selected section.
+- Existing V107 recovery, guarded writes and go-live stability fixes are retained.
+
+Important:
+- Streamlit does not provide a native guaranteed scroll API.
+- This is a best-effort browser auto-jump and should work in common desktop/mobile browsers.
+- If a browser blocks the script, the inline “You are now in…” guidance remains as fallback.
+
+No payroll/leave/advance calculation changes.

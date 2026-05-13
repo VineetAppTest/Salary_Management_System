@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from io import BytesIO
 from sqlalchemy import create_engine, text
 
@@ -162,8 +163,8 @@ def check_db_table_exists(conn, name):
     exists = conn.execute(text("""
         SELECT EXISTS (
             SELECT 1
-            FROM information_setup.tables
-            WHERE table_setup = 'public'
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
             AND table_name = :table_name
         )
     """), {"table_name": table}).scalar()
@@ -174,8 +175,8 @@ def check_db_table_columns(conn, name):
     existing = [
         row[0] for row in conn.execute(text("""
             SELECT column_name
-            FROM information_setup.columns
-            WHERE table_setup = 'public'
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
             AND table_name = :table_name
         """), {"table_name": table}).fetchall()
     ]
@@ -241,15 +242,27 @@ def read_table_db(name):
         st.session_state["last_db_runtime_issue"] = f"Could not read {name} from Cloud Storage. Local fallback used."
         return read_table_csv(name)
 
-def write_table_db(name, df):
+def write_table_db(name, df, allow_empty_restore=False):
     engine = get_db_engine()
     if engine is None:
         write_table_csv(name, df)
         return
     df = normalize_required_columns(name, df)
+    critical_tables = {"advance_cases", "advance_schedule", "leave_entries", "users", "employees", "payroll_items"}
     try:
-        # Fast path: no setup scan here. If setup is broken, the action fails and falls back.
         table = db_table_name(name)
+        existing_count = 0
+        if name in critical_tables:
+            try:
+                with engine.connect() as conn:
+                    existing_count = int(conn.execute(text(f'SELECT COUNT(*) FROM "{table}"')).scalar() or 0)
+            except Exception:
+                existing_count = 0
+            if existing_count > 0:
+                backup_table(name, "before_write_guard")
+            if existing_count > 0 and df.empty and not allow_empty_restore:
+                raise ValueError(f"Blocked unsafe empty write for {name}. Existing rows: {existing_count}. Use Section Rollback or explicit recovery if clearing is intended.")
+
         with engine.begin() as conn:
             try:
                 conn.execute(text("SET LOCAL statement_timeout = '60000'"))
@@ -260,7 +273,10 @@ def write_table_db(name, df):
             df.astype(str).to_sql(table, engine, if_exists="append", index=False, method="multi", chunksize=100)
         st.session_state[db_table_cache_key(name)] = df.copy()
     except Exception as e:
-        st.session_state["last_db_runtime_issue"] = f"Could not write {name} to Cloud Storage. Local fallback used."
+        st.session_state["last_db_runtime_issue"] = f"Could not write {name} to Cloud Storage. Local fallback used. Details: {e}"
+        # Do not silently overwrite local fallback when an unsafe DB write was blocked.
+        if "Blocked unsafe empty write" in str(e):
+            raise
         write_table_csv(name, df)
         clear_db_table_cache(name)
 
@@ -312,7 +328,7 @@ def get_setup_alignment_report():
             for name, required in REQUIRED_FILES.items():
                 table = db_table_name(name)
                 existing = [r[0] for r in conn.execute(text("""
-                    SELECT column_name FROM information_setup.columns
+                    SELECT column_name FROM information_schema.columns
                     WHERE table_name = :table_name
                 """), {"table_name": table}).fetchall()]
                 missing = [c for c in required if c not in existing]
@@ -397,9 +413,9 @@ def read_table(name):
         return read_table_db(name)
     return read_table_csv(name)
 
-def write_table(name, df):
+def write_table(name, df, allow_empty_restore=False):
     if db_enabled():
-        write_table_db(name, df)
+        write_table_db(name, df, allow_empty_restore=allow_empty_restore)
     else:
         write_table_csv(name, df)
 
@@ -2054,6 +2070,39 @@ def apply_theme():
         }}
     }}
 
+    
+    /* V107 go-live UI polish */
+    .login-trust-grid {{ display: none !important; }}
+    .ww-nav-selected-note {{
+        border: 1px solid #BEE3F8;
+        background: #F0F9FF;
+        border-radius: 14px;
+        padding: 10px 12px;
+        color: #17324D;
+        font-weight: 750;
+        margin: 8px 0 12px 0;
+    }}
+    div[data-testid="stButton"] button[kind="primary"] {{
+        color: #FFFFFF !important;
+    }}
+    div[data-testid="stButton"] button:focus,
+    div[data-testid="stButton"] button:hover {{
+        color: #FFFFFF !important;
+        border-color: #0B4F71 !important;
+    }}
+    .ww-nav-group-title {{
+        margin-top: 2px !important;
+    }}
+    @media (min-width: 900px) {{
+        .nav-label {{ margin-top: 8px !important; }}
+    }}
+
+    
+    /* V108 auto-jump support */
+    .ww-nav-selected-note {{
+        position: relative;
+    }}
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -2393,11 +2442,6 @@ def login_screen():
                 <div>✓ Mobile-ready workflow</div>
                 <div>✓ Safer corrections</div>
             </div>
-        </div>
-        <div class='login-trust-grid'>
-            <div class='login-trust-card'><b>1</b><span>Capture leave and advances</span></div>
-            <div class='login-trust-card'><b>2</b><span>Review salary summary</span></div>
-            <div class='login-trust-card'><b>3</b><span>Approve with confidence</span></div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -3135,13 +3179,49 @@ def focus_message_for_page(page_name):
     return mapping.get(page_name, f"{page_name} opened. Continue with the highlighted section below.")
 
 
+
+def auto_jump_to_selected_section():
+    """Best-effort browser jump to selected page content after navigation.
+
+    Streamlit reruns the page after a button click. This helper places a target anchor
+    and asks the browser to scroll close to it. It is intentionally best-effort because
+    browser/Streamlit iframe behaviour can vary.
+    """
+    st.markdown("<div id='ww-selected-section-anchor'></div>", unsafe_allow_html=True)
+    if st.session_state.pop("auto_jump_to_selected_section", False):
+        components.html(
+            """
+            <script>
+            setTimeout(function() {
+                try {
+                    const parentDoc = window.parent.document;
+                    const el = parentDoc.getElementById('ww-selected-section-anchor');
+                    if (el) {
+                        const y = el.getBoundingClientRect().top + window.parent.pageYOffset - 12;
+                        window.parent.scrollTo({top: y, behavior: 'smooth'});
+                    }
+                } catch (e) {
+                    try {
+                        window.parent.scrollTo({top: 420, behavior: 'smooth'});
+                    } catch (err) {}
+                }
+            }, 350);
+            </script>
+            """,
+            height=0,
+        )
+
+
 def render_nav_group(title, page_names, current_page, key_prefix):
     st.markdown(f"<div class='ww-nav-group-title'>{title}</div>", unsafe_allow_html=True)
     for page_name in page_names:
-        active = " ✅" if current_page == page_name else ""
-        if st.button(page_name + active, use_container_width=True, key=f"{key_prefix}_{title}_{page_name}"):
+        is_active = current_page == page_name
+        label = f"➤ {page_name}" if is_active else page_name
+        if st.button(label, use_container_width=True, key=f"{key_prefix}_{title}_{page_name}", type="primary" if is_active else "secondary"):
             st.session_state.page = page_name
             set_action_focus(focus_message_for_page(page_name), page=page_name)
+            st.session_state.scroll_target_note = f"You are now in {page_name}. Continue below."
+            st.session_state.auto_jump_to_selected_section = True
             st.rerun()
 
 
@@ -3388,6 +3468,69 @@ def backup_table(name, label="backup"):
         return str(path)
     except Exception as e:
         return f"Backup failed for {name}: {e}"
+
+
+
+def list_section_backups(table_name):
+    """List local CSV backups for a table, newest first."""
+    try:
+        backup_dir = BACKUP_DIR()
+        files = sorted(backup_dir.glob(f"{table_name}_*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
+        return files
+    except Exception:
+        return []
+
+def restore_table_from_backup(table_name, backup_path):
+    """Restore one table from a selected backup without touching other sections."""
+    backup_path = Path(backup_path)
+    if not backup_path.exists():
+        return False, "Backup file not found."
+    try:
+        backup_table(table_name, "before_section_rollback")
+        df = pd.read_csv(backup_path)
+        df = normalize_required_columns(table_name, df)
+        write_table(table_name, df, allow_empty_restore=True)
+        clear_db_table_cache(table_name)
+        return True, f"{table_name} restored from {backup_path.name}."
+    except Exception as e:
+        return False, str(e)
+
+def section_rollback_panel():
+    st.markdown("### Section Rollback")
+    st.caption("Restore one section from a saved backup. This does not reset the whole app.")
+    section_map = {
+        "Advances - cases": "advance_cases",
+        "Advances - repayment schedule": "advance_schedule",
+        "Leave entries": "leave_entries",
+        "Users & Access": "users",
+        "Employees": "employees",
+        "Payroll rows": "payroll_items",
+    }
+    section_label = st.selectbox("Section to rollback", list(section_map.keys()))
+    table_name = section_map[section_label]
+    backups = list_section_backups(table_name)
+    if not backups:
+        st.warning("No local backups found for this section yet. Backups are created before safe corrections and guarded writes.")
+        return
+    selected = st.selectbox("Select backup point", backups, format_func=lambda p: f"{p.name} · {datetime.fromtimestamp(p.stat().st_mtime).strftime('%d %b %Y, %I:%M %p')}")
+    try:
+        preview = pd.read_csv(selected).head(20)
+        st.caption(f"Preview: first 20 rows from {selected.name}")
+        st.dataframe(preview, use_container_width=True, height=240)
+    except Exception as e:
+        st.warning(f"Could not preview backup: {e}")
+    confirm = st.checkbox(f"I confirm rollback of only {section_label}")
+    if st.button("Rollback selected section", use_container_width=True, type="primary"):
+        if not confirm:
+            st.error("Please tick confirmation before rollback.")
+            return
+        ok, msg = restore_table_from_backup(table_name, selected)
+        if ok:
+            add_audit(st.session_state.user["email"], "SECTION_ROLLBACK", f"{section_label}: {selected.name}")
+            set_confirmation(msg, celebrate=True)
+            st.rerun()
+        else:
+            st.error(f"Rollback failed: {msg}")
 
 
 def backup_advance_tables(label="advance_correction"):
@@ -5299,7 +5442,7 @@ def demo_mode_guide_panel():
 
 
 def tech_page():
-    st.subheader("System Admin Utilities")
+    st.subheader("Setup, Recovery & Technical Checks")
     demo_mode_panel("tech")
     if not is_demo_mode():
         st.info(f"Storage mode: {db_connection_status_text()}")
@@ -5311,7 +5454,7 @@ def tech_page():
         st.warning("Only Admin users can access System Admin utilities.")
         return
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Advance Master", "Users & Access", "Demo Mode Guide", "Storage Health", "System Notes"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Advance Master", "Users & Access", "Recovery", "Technical Checks", "Demo Mode Guide", "System Notes"])
 
     def build_case_schedule_from_inputs(advance_id, emp_id, amount, start_month_label, first_deduction, remaining_months, status):
         start_year, start_month = parse_month_label(start_month_label)
@@ -5607,6 +5750,9 @@ def tech_page():
                     return
                 add_audit(st.session_state.user["email"], "CREATE_USER", clean_email)
                 set_confirmation(f"Login created and verified for {clean_email}.", celebrate=True)
+                st.session_state.page = "Users & Access"
+                st.session_state.scroll_target_note = "User created. You are still in Users & Access."
+                st.session_state.auto_jump_to_selected_section = True
                 st.rerun()
 
         st.divider()
@@ -5671,6 +5817,9 @@ def tech_page():
                         return
                     add_audit(st.session_state.user["email"], "EDIT_USER", f"{old_email} -> {clean_email}")
                     set_confirmation(f"Login updated and verified for {clean_email}.", celebrate=True)
+                    st.session_state.page = "Users & Access"
+                    st.session_state.scroll_target_note = "User updated. You are still in Users & Access."
+                    st.session_state.auto_jump_to_selected_section = True
                     st.rerun()
 
             st.markdown("#### Delete Login")
@@ -5700,12 +5849,15 @@ def tech_page():
                     st.rerun()
 
     with tab3:
-        demo_mode_guide_panel()
+        section_rollback_panel()
 
     with tab4:
         database_health_panel()
 
     with tab5:
+        demo_mode_guide_panel()
+
+    with tab6:
         st.markdown("### Utility definitions")
         st.info("Advance ID is the single control point. Employee is locked after advance creation to protect data integrity.")
         st.info("Unified Advance Editor writes both advance_cases and advance_schedule together.")
@@ -5761,14 +5913,17 @@ def logs_page():
 
 def main():
     st.set_page_config(page_title="WageWise", page_icon="💼", layout="wide")
-    ensure_data_files()
     apply_theme()
 
+    # Speed: do not run data/table checks before showing the login screen.
     if "auth_user" not in st.session_state:
         if oidc_enabled() and handle_oidc_authenticated_user():
+            ensure_data_files()
+        else:
+            login_screen()
             return
-        login_screen()
-        return
+    else:
+        ensure_data_files()
 
     if not st.session_state.get("user"):
         role_selection_page()
@@ -5778,6 +5933,9 @@ def main():
     st.markdown("<div class='sms-subtitle'>Leave, advances and payroll in one guided flow</div>", unsafe_allow_html=True)
     show_confirmation_area()
     page = page_navigation()
+    if st.session_state.get("scroll_target_note"):
+        st.markdown(f"<div class='ww-nav-selected-note'>{st.session_state.pop('scroll_target_note')}</div>", unsafe_allow_html=True)
+    auto_jump_to_selected_section()
     show_action_focus()
     if page == "Dashboard":
         dashboard_page()
