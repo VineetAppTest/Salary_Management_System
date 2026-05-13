@@ -1,3 +1,13 @@
+
+# WageWise V115 Section-First Redirect Layout
+
+- Fixed WageWise header visibility and navigation text overlap.
+- Disabled unreliable auto-scroll and moved to section-first rerun navigation.
+- Restored centered Section update card between navigation and content.
+- Renamed the actual user management page to Access Manager to avoid Users & Access / User & Access Manager redundancy.
+- Added clearer primary, secondary and subheader hierarchy.
+- Scope is UI/navigation only; payroll, database, leave and advance logic are unchanged.
+
 # Salary Management System - Streamlit Cloud Build
 
 ## Corrected access structure

@@ -34,9 +34,9 @@ LEAVE_UNITS = {
 }
 
 
-BUILD_VERSION = "V114"
-BUILD_LABEL = "V114 · Auto-Scroll Anchor Hardening"
-NAV_SCROLL_ANCHOR = "ww-selected-content-anchor"
+BUILD_VERSION = "V115"
+BUILD_LABEL = "V115 · Section-First Redirect Layout"
+NAV_SCROLL_ANCHOR = "ww-section-content-anchor"
 
 REQUIRED_FILES = {
     "users": ["email", "name", "role", "password_hash", "active", "allow_admin", "allow_supervisor"],
@@ -2357,6 +2357,186 @@ def apply_theme():
         margin-top: 10px;
     }}
 
+    /* V115 section-first redirect layout: remove auto-scroll dependency and fix overlap */
+    .block-container {{
+        padding-top: 1.0rem !important;
+        padding-left: 1.05rem !important;
+        padding-right: 1.05rem !important;
+        max-width: 1240px !important;
+    }}
+    .ww-app-shell {{
+        background: linear-gradient(135deg, #063F32 0%, #0B5A46 58%, #B98A35 100%);
+        color: #FFFFFF !important;
+        border-radius: 22px;
+        padding: 18px 20px;
+        margin: 0 0 14px 0;
+        box-shadow: 0 14px 34px rgba(6, 63, 50, 0.20);
+        clear: both;
+        position: relative;
+        z-index: 2;
+        overflow: hidden;
+    }}
+    .ww-primary-heading {{
+        font-size: clamp(1.95rem, 4.6vw, 2.85rem);
+        font-weight: 950;
+        letter-spacing: -0.035em;
+        line-height: 1.02;
+        margin: 0 0 5px 0;
+        color: #FFFFFF !important;
+        overflow-wrap: anywhere;
+    }}
+    .ww-secondary-heading {{
+        font-size: clamp(1.05rem, 2.4vw, 1.32rem);
+        font-weight: 850;
+        line-height: 1.18;
+        color: rgba(255,255,255,.94) !important;
+        margin: 0 0 5px 0;
+    }}
+    .ww-subheader {{
+        font-size: .95rem;
+        line-height: 1.42;
+        color: rgba(255,255,255,.82) !important;
+        margin: 0;
+        max-width: 900px;
+    }}
+    .build-marker {{
+        background: rgba(255,255,255,.16) !important;
+        color: #FFFFFF !important;
+        border: 1px solid rgba(255,255,255,.32) !important;
+        white-space: nowrap !important;
+    }}
+    .top-nav, .nav-label, .ww-nav-note, .ww-nav-group-title {{
+        clear: both !important;
+        overflow-wrap: anywhere !important;
+        white-space: normal !important;
+    }}
+    .top-nav {{
+        display: block !important;
+        width: 100% !important;
+        margin: 4px 0 10px 0 !important;
+        line-height: 1.35 !important;
+        padding: 9px 12px !important;
+        border-radius: 14px !important;
+        background: #F8FBFD !important;
+        border: 1px solid #DDEAF2 !important;
+    }}
+    .nav-label {{
+        margin-top: 12px !important;
+        margin-bottom: 6px !important;
+        font-size: 15px !important;
+        font-weight: 950 !important;
+        color: #063F32 !important;
+    }}
+    .ww-nav-note {{
+        margin: 0 0 10px 0 !important;
+        line-height: 1.35 !important;
+    }}
+    .ww-nav-group-title {{
+        font-size: 13px !important;
+        line-height: 1.2 !important;
+        margin: 4px 0 8px 0 !important;
+    }}
+    div[data-testid="stButton"] button {{
+        white-space: normal !important;
+        line-height: 1.2 !important;
+        min-height: 42px !important;
+        overflow: visible !important;
+    }}
+    div[data-testid="stButton"] button p {{
+        white-space: normal !important;
+        line-height: 1.2 !important;
+        overflow-wrap: anywhere !important;
+    }}
+    .ww-section-update-wrap {{
+        display: flex;
+        justify-content: center;
+        width: 100%;
+        margin: 10px 0 16px 0;
+        clear: both;
+    }}
+    .ww-section-update {{
+        width: min(780px, 100%);
+        background: #FFFFFF;
+        border: 1px solid #E7DCC8;
+        border-left: 6px solid #B98A35;
+        border-radius: 18px;
+        padding: 13px 16px;
+        text-align: center;
+        box-shadow: 0 10px 26px rgba(24,37,31,.08);
+    }}
+    .ww-section-update-kicker {{
+        text-transform: uppercase;
+        letter-spacing: .08em;
+        font-weight: 900;
+        font-size: 12px;
+        color: #B98A35;
+        margin-bottom: 2px;
+    }}
+    .ww-section-update-title {{
+        font-size: 18px;
+        font-weight: 950;
+        color: #172B22;
+        line-height: 1.22;
+        margin-bottom: 2px;
+    }}
+    .ww-section-update-note {{
+        color: #64746A;
+        font-size: 13px;
+        line-height: 1.38;
+    }}
+    .ww-page-heading-card {{
+        background: #FFFFFF;
+        border: 1px solid #DDEAF2;
+        border-radius: 18px;
+        padding: 12px 15px;
+        margin: 8px 0 14px 0;
+        box-shadow: 0 8px 20px rgba(24,37,31,.05);
+    }}
+    .ww-page-heading-primary {{
+        font-size: 22px;
+        font-weight: 950;
+        color: #063F32;
+        line-height: 1.18;
+        margin: 0 0 3px 0;
+    }}
+    .ww-page-heading-secondary {{
+        font-size: 14px;
+        color: #5B6D63;
+        line-height: 1.36;
+        margin: 0;
+    }}
+    @media (max-width: 768px) {{
+        .block-container {{
+            padding-top: .75rem !important;
+            padding-left: .70rem !important;
+            padding-right: .70rem !important;
+        }}
+        .ww-app-shell {{
+            border-radius: 18px;
+            padding: 15px 14px;
+            margin-bottom: 12px;
+        }}
+        .ww-primary-heading {{
+            font-size: 26px !important;
+        }}
+        .build-marker {{
+            display: inline-block !important;
+            margin-left: 4px !important;
+            margin-top: 4px !important;
+        }}
+        .top-nav {{
+            font-size: 12px !important;
+            padding: 8px 10px !important;
+        }}
+        .ww-section-update {{
+            padding: 12px 12px !important;
+            border-radius: 16px !important;
+        }}
+        .ww-page-heading-primary {{
+            font-size: 19px !important;
+        }}
+    }}
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -2611,8 +2791,8 @@ def handle_oidc_authenticated_user():
             <div class='login-main-subtitle'>Your Google login worked, but this email is not enabled inside WageWise.</div>
         </div>
         """, unsafe_allow_html=True)
-        st.error(f"Email not enabled in WageWise Users & Access: {oidc_user['email']}")
-        st.info("Ask an Admin to add this exact Gmail ID under Setup & Controls → Users & Access.")
+        st.error(f"Email not enabled in WageWise Access Manager: {oidc_user['email']}")
+        st.info("Ask an Admin to add this exact Gmail ID under Setup & Controls → Access Manager.")
         st.button("Logout", on_click=st.logout, use_container_width=True)
         return True
 
@@ -3423,7 +3603,7 @@ def focus_message_for_page(page_name):
         "Employees": "Employees page opened. Add/edit active employees and supervisor mapping.",
         "Advance Master": "Advance Master opened. Review and safely reconcile backend-created advances.",
         "Advance Master": "Advance Master opened. Review and safely reconcile backend-created advances.",
-        "Users & Access": "Users & Access opened. Create users, edit access, or repair user storage columns.",
+        "Access Manager": "Access Manager opened. Manage login users, role cards and access permissions.",
         "Recovery": "Recovery opened. Roll back a selected section from saved backups.",
         "Technical Checks": "Technical Checks opened. Review storage and readiness only when needed.",
         "Demo Mode Guide": "Demo Mode Guide opened. Review demo/client mode behaviour.",
@@ -3439,51 +3619,83 @@ def focus_message_for_page(page_name):
 
 
 
+
 def render_selected_content_anchor():
-    """Render a hardcoded stable anchor before selected page content."""
+    """V115 keeps a harmless content marker only for visual separation; no browser auto-scroll is used."""
     st.markdown(
-        '<div id="ww-selected-content-anchor" class="ww-content-anchor" aria-hidden="true"></div>',
+        '<div id="ww-section-content-anchor" class="ww-content-anchor" aria-hidden="true"></div>',
         unsafe_allow_html=True,
     )
 
 def trigger_auto_scroll_to_content():
-    """Best-effort scroll to selected page content after a navigation button rerun."""
-    if not st.session_state.pop("pending_auto_scroll_to_content", False):
-        return
+    """Disabled in v115. Section-first rerun navigation is more reliable than browser auto-scroll."""
+    st.session_state.pop("pending_auto_scroll_to_content", None)
+    return
 
-    components.html(
-        """
-        <script>
-        (function() {
-            const anchorId = "ww-selected-content-anchor";
 
-            function scrollParentToAnchor() {
-                try {
-                    const doc = window.parent.document;
-                    const el = doc.getElementById(anchorId);
-                    if (el) {
-                        const rect = el.getBoundingClientRect();
-                        const currentY = window.parent.pageYOffset || doc.documentElement.scrollTop || doc.body.scrollTop || 0;
-                        const targetY = Math.max(0, currentY + rect.top - 8);
-                        window.parent.scrollTo({ top: targetY, behavior: "smooth" });
-                        return true;
-                    }
-                } catch (e) {}
+def page_heading_text(page_name):
+    mapping = {
+        "Dashboard": ("Dashboard", "Monthly status, quick actions and guided payroll readiness."),
+        "Payroll Control Centre": ("Payroll Control Centre", "Start here to review readiness before payroll actions."),
+        "Payroll Calculation": ("Payroll Calculation", "Generate or recalculate payroll after validating leave, advances and holidays."),
+        "Salary Summary": ("Salary Summary", "Review employee-wise salary impact before approval."),
+        "Payroll Approval": ("Payroll Approval", "Approve payroll only after the summary has been reviewed."),
+        "Leave": ("Leave Management", "Record leave entries and review their payroll impact."),
+        "Holiday": ("Holiday Management", "Maintain employee-specific holiday exclusions."),
+        "Advance": ("Advance Entry", "Create advances and repayment schedules."),
+        "Employee Profile": ("Employee Profile", "Review individual employee payroll and leave details."),
+        "Employees": ("Employee Master", "Create and maintain employees, salary setup and supervisor mapping."),
+        "Access Manager": ("Access Manager", "Manage users, roles, activation status and access permissions."),
+        "Advance Master": ("Advance Master", "Reconcile and safely edit backend-created advance schedules."),
+        "Bulk Leave Upload": ("Bulk Leave Upload", "Upload, validate and confirm monthly leave entries in bulk."),
+        "Recovery": ("Recovery", "Restore one section from saved backups without resetting the full app."),
+        "Technical Checks": ("Technical Checks", "Review storage and readiness only when troubleshooting."),
+        "System Health": ("System Health", "Check table health, missing columns and readiness."),
+        "Demo Mode Guide": ("Demo Mode Guide", "Control client-facing demo simplification."),
+        "Logs": ("Logs", "Review audit and cleansing activity."),
+    }
+    return mapping.get(page_name, (page_name, "Continue with the selected WageWise section."))
 
-                try {
-                    window.parent.scrollTo({ top: 360, behavior: "smooth" });
-                } catch (e) {}
 
-                return false;
-            }
-
-            setTimeout(scrollParentToAnchor, 250);
-            setTimeout(scrollParentToAnchor, 750);
-            setTimeout(scrollParentToAnchor, 1300);
-        })();
-        </script>
+def render_wagewise_header():
+    st.markdown(
+        f"""
+        <div class='ww-app-shell'>
+            <div class='ww-primary-heading'>WageWise <span class='build-marker'>Build {BUILD_VERSION}</span></div>
+            <div class='ww-secondary-heading'>Salary Management System</div>
+            <div class='ww-subheader'>Leave, advances, payroll, access control and readiness checks in one governed workspace.</div>
+        </div>
         """,
-        height=0,
+        unsafe_allow_html=True,
+    )
+
+
+def render_section_update(page_name):
+    title, note = page_heading_text(page_name)
+    st.markdown(
+        f"""
+        <div class='ww-section-update-wrap'>
+            <div class='ww-section-update'>
+                <div class='ww-section-update-kicker'>Section update</div>
+                <div class='ww-section-update-title'>{title}</div>
+                <div class='ww-section-update-note'>{note}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_page_heading(page_name):
+    title, note = page_heading_text(page_name)
+    st.markdown(
+        f"""
+        <div class='ww-page-heading-card'>
+            <div class='ww-page-heading-primary'>{title}</div>
+            <div class='ww-page-heading-secondary'>{note}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 def render_nav_group(title, page_names, current_page, key_prefix):
@@ -3500,7 +3712,6 @@ def render_nav_group(title, page_names, current_page, key_prefix):
             st.session_state.page = page_name
             set_action_focus(focus_message_for_page(page_name), page=page_name)
             st.session_state.scroll_target_note = f"You are now in {page_name}."
-            st.session_state.pending_auto_scroll_to_content = True
             st.rerun()
 
 
@@ -3520,7 +3731,7 @@ def page_navigation():
         nav_groups = {
             "Daily Work": ["Dashboard", "Leave", "Holiday", "Advance", "Employee Profile"],
             "Payroll Flow": ["Payroll Control Centre", "Payroll Calculation", "Salary Summary", "Payroll Approval"],
-            "Setup": ["Employees", "Users & Access", "Advance Master", "Bulk Leave Upload"],
+            "Setup & Controls": ["Employees", "Access Manager", "Advance Master", "Bulk Leave Upload"],
             "Recovery & Technical": ["Recovery", "Technical Checks", "System Health", "Demo Mode Guide", "Logs"],
         }
 
@@ -3530,7 +3741,7 @@ def page_navigation():
 
     st.markdown("<div class='nav-label'>Navigation</div>", unsafe_allow_html=True)
     st.markdown(
-        "<div class='ww-nav-note'>Tap a section. WageWise will open and scroll to the selected section.</div>",
+        "<div class='ww-nav-note'>Tap a section. WageWise will redirect to that section directly; no auto-scroll is used.</div>",
         unsafe_allow_html=True,
     )
 
@@ -3546,7 +3757,7 @@ def page_navigation():
                 render_nav_group("Payroll Flow", nav_groups["Payroll Flow"], st.session_state.page, "nav")
         with right_col:
             with st.container(border=True):
-                render_nav_group("Setup", nav_groups["Setup"], st.session_state.page, "nav")
+                render_nav_group("Setup & Controls", nav_groups["Setup & Controls"], st.session_state.page, "nav")
             with st.container(border=True):
                 render_nav_group("Recovery & Technical", nav_groups["Recovery & Technical"], st.session_state.page, "nav")
 
@@ -3627,9 +3838,9 @@ def supervisor_dashboard_page():
     recent_advances = advances[advances["Created_By"].astype(str).str.lower() == user_email.lower()].tail(5) if (not advances.empty and "Created_By" in advances.columns) else advances
 
     tab1, tab2 = st.tabs(["Recent Leaves", "Recent Advances"])
-    if requested_section == "Advance Master":
+    with tab1:
         st.dataframe(recent_leaves, use_container_width=True)
-    if requested_section == "Users & Access":
+    with tab2:
         st.dataframe(recent_advances, use_container_width=True)
 
 
@@ -3774,7 +3985,7 @@ def section_rollback_panel():
         "Advances - cases": "advance_cases",
         "Advances - repayment schedule": "advance_schedule",
         "Leave entries": "leave_entries",
-        "Users & Access": "users",
+        "Access Manager": "users",
         "Employees": "employees",
         "Payroll rows": "payroll_items",
     }
@@ -5727,7 +5938,7 @@ def tech_page():
         return
 
     requested_section = st.session_state.get("page", "Advance Master")
-    if requested_section not in ["Advance Master", "Users & Access", "Recovery", "Technical Checks", "Demo Mode Guide", "System Notes"]:
+    if requested_section not in ["Advance Master", "Access Manager", "Recovery", "Technical Checks", "Demo Mode Guide", "System Notes"]:
         requested_section = "Advance Master"
     st.markdown(f"### {requested_section}")
 
@@ -5946,16 +6157,16 @@ def tech_page():
             except Exception as e:
                 st.error(f"Could not create advance: {e}")
 
-    if requested_section == "Users & Access":
-        st.markdown("### User & Access Manager")
-        st.caption("Create users, edit login email IDs, reset passwords, activate/deactivate users, or switch role-card access ON/OFF.")
+    if requested_section == "Access Manager":
+        st.markdown("### Access Manager")
+        st.caption("Manage login users, role-card permissions, activation status and fallback password access.")
 
         if st.button("Repair Users Storage Columns", use_container_width=True, key="repair_users_storage_columns"):
             ok, msg = ensure_users_table_storage_columns()
             if ok:
                 set_confirmation("Users storage columns verified/repaired.", celebrate=True)
-                st.session_state.page = "Users & Access"
-                st.session_state.scroll_target_note = "Users storage repaired. You are still in Users & Access."
+                st.session_state.page = "Access Manager"
+                st.session_state.scroll_target_note = "Users storage repaired. You are still in Access Manager."
                 st.rerun()
             else:
                 st.error(f"Users storage repair failed: {msg}")
@@ -6027,8 +6238,8 @@ def tech_page():
                     return
                 add_audit(st.session_state.user["email"], "CREATE_USER", clean_email)
                 set_confirmation(f"Login created and verified for {clean_email}.", celebrate=True)
-                st.session_state.page = "Users & Access"
-                st.session_state.scroll_target_note = "User created. You are still in Users & Access."
+                st.session_state.page = "Access Manager"
+                st.session_state.scroll_target_note = "User created. You are still in Access Manager."
                 st.rerun()
 
         st.divider()
@@ -6093,8 +6304,8 @@ def tech_page():
                         return
                     add_audit(st.session_state.user["email"], "EDIT_USER", f"{old_email} -> {clean_email}")
                     set_confirmation(f"Login updated and verified for {clean_email}.", celebrate=True)
-                    st.session_state.page = "Users & Access"
-                    st.session_state.scroll_target_note = "User updated. You are still in Users & Access."
+                    st.session_state.page = "Access Manager"
+                    st.session_state.scroll_target_note = "User updated. You are still in Access Manager."
                     st.rerun()
 
             st.markdown("#### Delete Login")
@@ -6204,10 +6415,11 @@ def main():
         role_selection_page()
         return
 
-    st.markdown("<div class='sms-title'>WageWise <span class='build-marker'>Build V114</span></div>", unsafe_allow_html=True)
-    st.markdown("<div class='sms-subtitle'>Leave, advances and payroll in one guided flow</div>", unsafe_allow_html=True)
+    render_wagewise_header()
     show_confirmation_area()
     page = page_navigation()
+    render_section_update(page)
+    render_page_heading(page)
     render_selected_content_anchor()
     if page == "Dashboard":
         dashboard_page()
@@ -6217,7 +6429,7 @@ def main():
         salary_summary_page()
     elif page == "Leave":
         leave_page()
-    elif page in ["Users & Access", "Advance Master", "Recovery", "Technical Checks", "Demo Mode Guide", "System Notes", "System Admin", "Tech"]:
+    elif page in ["Access Manager", "Advance Master", "Recovery", "Technical Checks", "Demo Mode Guide", "System Notes", "System Admin", "Tech"]:
         tech_page()
     elif page == "Bulk Leave Upload":
         bulk_leave_upload_page()
@@ -6240,11 +6452,9 @@ def main():
 
     trigger_auto_scroll_to_content()
 
-    if st.session_state.get("scroll_target_note") or st.session_state.get("action_focus_message"):
-        st.divider()
-        st.markdown("<div class='ww-bottom-guidance-title'>Section update</div>", unsafe_allow_html=True)
-        if st.session_state.get("scroll_target_note"):
-            st.markdown(f"<div class='ww-nav-selected-note'>{st.session_state.pop('scroll_target_note')}</div>", unsafe_allow_html=True)
+    if st.session_state.get("scroll_target_note"):
+        st.session_state.pop("scroll_target_note", None)
+    if st.session_state.get("action_focus_message"):
         show_action_focus()
 
 if __name__ == "__main__":
