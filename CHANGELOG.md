@@ -1,3 +1,11 @@
+# V116 — Final Client Ship Ready
+
+- Final UI cushion and single-confirmation stabilization.
+- Added P0 advance safety hardening to prevent schedule-linked advance edits from blanking master/schedule tables.
+- Added backup-before-write and integrity validation for advance create/edit/cancel/unified advance flows.
+- Fixed advance correction fields to use `First_Month_Deduction` and `Timestamp` consistently.
+- Retained v115.4 L0 contractor, accordion navigation and mobile auto-scroll fallback.
+
 
 # WageWise V115 Section-First Redirect Layout
 

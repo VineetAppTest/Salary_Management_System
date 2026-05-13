@@ -33,9 +33,26 @@ LEAVE_UNITS = {
     "Leave - Collaborative": 1.0,
 }
 
+LEVEL_OPTIONS = ["L0", "L1", "L2"]
 
-BUILD_VERSION = "V115.3"
-BUILD_LABEL = "V115.1 · Client Redirect Visibility Fix"
+def normalize_employee_level(level):
+    level_value = str(level or "L1").strip().upper()
+    return level_value if level_value in LEVEL_OPTIONS else "L1"
+
+def paid_leave_allowance_for_level(level):
+    level_value = normalize_employee_level(level)
+    if level_value == "L0":
+        return 0.0
+    if level_value == "L1":
+        return 2.0
+    return 4.0
+
+def is_contractor_level(level):
+    return normalize_employee_level(level) == "L0"
+
+
+BUILD_VERSION = "V116"
+BUILD_LABEL = "V116 · Final Client Ship Ready + Advance Safety"
 NAV_SCROLL_ANCHOR = "ww-section-content-anchor"
 
 REQUIRED_FILES = {
@@ -160,8 +177,18 @@ def read_table_csv(name):
         df = pd.DataFrame(columns=REQUIRED_FILES.get(name, []))
     return normalize_required_columns(name, df)
 
-def write_table_csv(name, df):
-    normalize_required_columns(name, df).to_csv(file_path(name), index=False)
+def write_table_csv(name, df, allow_empty_restore=False):
+    df = normalize_required_columns(name, df)
+    critical_tables = {"advance_cases", "advance_schedule", "leave_entries", "users", "employees", "payroll_items"}
+    if name in critical_tables and not allow_empty_restore:
+        try:
+            existing = read_table_csv(name)
+            if len(existing) > 0 and df.empty:
+                backup_table(name, "before_csv_empty_write_guard")
+                raise ValueError(f"Blocked unsafe empty local write for {name}. Existing rows: {len(existing)}.")
+        except (pd.errors.EmptyDataError, FileNotFoundError):
+            pass
+    df.to_csv(file_path(name), index=False)
 
 def check_db_table_exists(conn, name):
     table = db_table_name(name)
@@ -428,7 +455,7 @@ def write_table(name, df, allow_empty_restore=False):
     if db_enabled():
         write_table_db(name, df, allow_empty_restore=allow_empty_restore)
     else:
-        write_table_csv(name, df)
+        write_table_csv(name, df, allow_empty_restore=allow_empty_restore)
 
 def normalize_payroll_columns(df):
     """Ensure older CSV files get the new approval columns."""
@@ -485,11 +512,19 @@ def payroll_excel_bytes(month_value):
 
 
 def show_confirmation_area():
-    """Display persistent confirmation after button actions."""
+    """Display one clean blinking confirmation after button actions."""
     msg = st.session_state.pop("confirmation_message", None)
     celebrate = st.session_state.pop("celebrate_success", False)
     if msg:
-        st.success(msg)
+        st.markdown(
+            f"""
+            <div class='ww-clean-confirmation'>
+                <div class='ww-clean-confirmation-title'>Action completed</div>
+                <div class='ww-clean-confirmation-text'>{msg}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         if celebrate:
             st.balloons()
 
@@ -690,11 +725,11 @@ def build_leave_match_diagnostics(month_value):
         if not emp_leaves.empty:
             valid = emp_leaves[~emp_leaves["Status"].astype(str).str.lower().isin(["rejected", "cancelled", "canceled"])]
             counted = sum(LEAVE_UNITS.get(str(x), 0) for x in valid["Leave_Type"])
-        level = str(emp.get("Level", "L1"))
-        monthly_salary = safe_float(emp.get("Monthly_Salary", 0))
+        level = normalize_employee_level(emp.get("Level", "L1"))
+        salary_value = safe_float(emp.get("Monthly_Salary", 0))
         days_in_month = calendar.monthrange(yr, mon)[1]
-        daily_wage = monthly_salary / days_in_month if days_in_month else 0
-        allowed = 2 if level == "L1" else 4
+        daily_wage = salary_value if is_contractor_level(level) else (salary_value / days_in_month if days_in_month else 0)
+        allowed = paid_leave_allowance_for_level(level)
         expected_lop = max(0, counted - allowed)
         rows.append({
             "Emp_ID": emp_id,
@@ -867,7 +902,7 @@ def build_mobile_salary_summary(month_value):
             advance_left = safe_float(p.get("Advance_Balance_Close", 0))
 
         leaves_taken = safe_float(p.get("Leave_Units", 0))
-        base_leave_allowed = 2 if level == "L1" else 4
+        base_leave_allowed = paid_leave_allowance_for_level(level)
         report_lop = max(0.0, leaves_taken - base_leave_allowed)
         leave_deduction_cost = round(report_lop * daily_wage, 2)
 
@@ -2357,9 +2392,9 @@ def apply_theme():
         margin-top: 4px;
     }}
 
-    /* V115.3 accordion + stable delayed auto-scroll: keep fallback visible, enhance navigation smoothness */
+    /* V115.4 clean notification + mobile auto-scroll + header cushion */
     .block-container {{
-        padding-top: 1.0rem !important;
+        padding-top: 1.8rem !important;
         padding-left: 1.05rem !important;
         padding-right: 1.05rem !important;
         max-width: 1240px !important;
@@ -2368,8 +2403,8 @@ def apply_theme():
         background: linear-gradient(135deg, #063F32 0%, #0B5A46 58%, #B98A35 100%);
         color: #FFFFFF !important;
         border-radius: 22px;
-        padding: 18px 20px;
-        margin: 0 0 14px 0;
+        padding: 42px 28px 28px 28px;
+        margin: 22px 0 18px 0;
         box-shadow: 0 14px 34px rgba(6, 63, 50, 0.20);
         clear: both;
         position: relative;
@@ -2377,14 +2412,14 @@ def apply_theme():
         overflow: hidden;
         display: block !important;
         width: 100% !important;
-        min-height: 116px;
+        min-height: 158px;
     }}
     .ww-primary-heading {{
         font-size: clamp(1.95rem, 4.6vw, 2.85rem);
         font-weight: 950;
         letter-spacing: -0.035em;
-        line-height: 1.08;
-        margin: 0 0 6px 0;
+        line-height: 1.26;
+        margin: 6px 0 10px 0;
         color: #FFFFFF !important;
         overflow-wrap: anywhere;
         text-shadow: 0 2px 10px rgba(0,0,0,.18);
@@ -2460,6 +2495,33 @@ def apply_theme():
     .ww-app-shell {{
         isolation: isolate !important;
         min-height: 112px;
+    }}
+    .ww-clean-confirmation {{
+        background: #F4FFF8;
+        border: 1px solid #B9E7C8;
+        border-left: 7px solid #1E8F4D;
+        color: #173B27 !important;
+        border-radius: 16px;
+        padding: 12px 15px;
+        margin: 8px 0 12px 0;
+        box-shadow: 0 8px 22px rgba(24,37,31,.07);
+        animation: wwConfirmPulse 1.15s ease-in-out 2;
+    }}
+    .ww-clean-confirmation-title {{
+        font-weight: 950;
+        font-size: 14px;
+        color: #115C32 !important;
+        margin-bottom: 2px;
+    }}
+    .ww-clean-confirmation-text {{
+        color: #244934 !important;
+        font-size: 13px;
+        line-height: 1.35;
+    }}
+    @keyframes wwConfirmPulse {{
+        0% {{ transform: scale(1); box-shadow: 0 8px 22px rgba(24,37,31,.07); }}
+        45% {{ transform: scale(1.008); box-shadow: 0 0 0 5px rgba(30,143,77,.13), 0 10px 24px rgba(24,37,31,.10); }}
+        100% {{ transform: scale(1); box-shadow: 0 8px 22px rgba(24,37,31,.07); }}
     }}
     .ww-action-focus {{
         background: #F4FFF8;
@@ -2568,11 +2630,14 @@ def apply_theme():
         }}
         .ww-app-shell {{
             border-radius: 18px;
-            padding: 15px 14px;
-            margin-bottom: 12px;
+            padding: 36px 18px 24px 18px !important;
+            margin-top: 18px !important;
+            margin-bottom: 14px;
+            min-height: 154px;
         }}
         .ww-primary-heading {{
-            font-size: 26px !important;
+            font-size: 28px !important;
+            line-height: 1.32 !important;
         }}
         .build-marker {{
             display: inline-block !important;
@@ -3123,9 +3188,11 @@ def cleanse_data():
         add_clean_log("Employees", "Duplicate Emp_ID", "Kept latest row", "Emp_ID")
 
     for idx, row in employees.iterrows():
-        if row.get("Level") not in ["L1", "L2"]:
+        if normalize_employee_level(row.get("Level")) not in LEVEL_OPTIONS:
             employees.at[idx, "Level"] = "L1"
             add_clean_log("Employees", "Invalid Level", "Defaulted to L1", str(row.get("Emp_ID")))
+        else:
+            employees.at[idx, "Level"] = normalize_employee_level(row.get("Level"))
         employees.at[idx, "Monthly_Salary"] = max(0, pd.to_numeric(row.get("Monthly_Salary", 0), errors="coerce") or 0)
         employees.at[idx, "Extra_Paid_Leaves"] = max(0, pd.to_numeric(row.get("Extra_Paid_Leaves", 0), errors="coerce") or 0)
 
@@ -3264,11 +3331,19 @@ def calculate_employee_payroll(emp, year, month, extra_leave_override=None, spec
     month_end = pd.Timestamp(year=year, month=month, day=total_days)
 
     emp_id = str(emp["Emp_ID"])
-    level = str(emp["Level"])
-    monthly_salary = float(emp["Monthly_Salary"])
-    daily_wage = monthly_salary / total_days
-    base_extra = float(emp.get("Extra_Paid_Leaves", 0) or 0)
-    extra = base_extra if extra_leave_override is None else float(extra_leave_override)
+    level = normalize_employee_level(emp["Level"])
+    salary_value = safe_float(emp.get("Monthly_Salary", 0))
+    if is_contractor_level(level):
+        # L0 contractor: stored salary field is treated as the defined per-day rate.
+        daily_wage = salary_value
+        monthly_salary = round(daily_wage * total_days, 2)
+        base_extra = 0.0
+        extra = 0.0
+    else:
+        monthly_salary = salary_value
+        daily_wage = monthly_salary / total_days if total_days else 0.0
+        base_extra = float(emp.get("Extra_Paid_Leaves", 0) or 0)
+        extra = base_extra if extra_leave_override is None else float(extra_leave_override)
 
     emp_holidays = employee_holidays[employee_holidays["Emp_ID"].astype(str) == emp_id].copy() if not employee_holidays.empty else employee_holidays.copy()
     if not emp_holidays.empty:
@@ -3276,7 +3351,10 @@ def calculate_employee_payroll(emp, year, month, extra_leave_override=None, spec
         emp_holidays = emp_holidays[(emp_holidays["Date_dt"] >= month_start) & (emp_holidays["Date_dt"] <= month_end)]
     holiday_exclusions = float(len(emp_holidays))
 
-    paid_leave_allowed = (2 if level == "L1" else 4) + extra + holiday_exclusions
+    if is_contractor_level(level):
+        paid_leave_allowed = 0.0
+    else:
+        paid_leave_allowed = paid_leave_allowance_for_level(level) + extra + holiday_exclusions
 
     if leave_entries.empty:
         emp_leaves = pd.DataFrame(columns=list(leave_entries.columns) + ["Date_dt"])
@@ -3684,10 +3762,10 @@ def render_selected_content_anchor():
     )
 
 def trigger_auto_scroll_to_content():
-    """V115.3: delayed, retry-based auto-scroll after Streamlit rerun.
+    """V115.4: mobile-strengthened delayed auto-scroll after Streamlit rerun.
 
-    The accordion layout remains the safe fallback. This JS only improves smoothness
-    where the browser allows parent-frame scrolling.
+    Uses multiple scroll targets and retry attempts because Streamlit rerenders the
+    parent document and mobile browsers can ignore the first scroll command.
     """
     if not st.session_state.get("pending_auto_scroll_to_content"):
         return
@@ -3701,33 +3779,65 @@ def trigger_auto_scroll_to_content():
             const targetId = "ww-section-content-anchor";
             const label = "{target_label}";
             let attempts = 0;
-            const maxAttempts = 16;
+            const maxAttempts = 22;
+
+            function parentDocument() {{
+                try {{ return window.parent.document; }} catch (e) {{ return document; }}
+            }}
+
+            function parentWindow() {{
+                try {{ return window.parent; }} catch (e) {{ return window; }}
+            }}
 
             function findTarget() {{
-                try {{
-                    return window.parent.document.getElementById(targetId);
-                }} catch (e) {{
-                    return document.getElementById(targetId);
-                }}
+                const doc = parentDocument();
+                return doc.getElementById(targetId) || document.getElementById(targetId);
+            }}
+
+            function getScrollContainer(doc) {{
+                return doc.querySelector('[data-testid="stAppViewContainer"]')
+                    || doc.querySelector('.main')
+                    || doc.scrollingElement
+                    || doc.documentElement
+                    || doc.body;
             }}
 
             function stableScroll() {{
                 attempts += 1;
+                const doc = parentDocument();
+                const win = parentWindow();
                 const target = findTarget();
                 if (target) {{
+                    const rect = target.getBoundingClientRect();
+                    const currentY = win.pageYOffset || doc.documentElement.scrollTop || doc.body.scrollTop || 0;
+                    const offset = 14;
+                    const desiredY = Math.max(0, currentY + rect.top - offset);
                     try {{
-                        target.scrollIntoView({{ behavior: "smooth", block: "start", inline: "nearest" }});
-                    }} catch (e) {{
+                        win.scrollTo({{ top: desiredY, behavior: 'smooth' }});
+                    }} catch(e) {{
+                        win.scrollTo(0, desiredY);
+                    }}
+                    try {{
+                        target.scrollIntoView({{ behavior: 'smooth', block: 'start', inline: 'nearest' }});
+                    }} catch(e) {{
                         target.scrollIntoView(true);
                     }}
+                    try {{
+                        const container = getScrollContainer(doc);
+                        if (container && container.scrollTo) {{
+                            container.scrollTo({{ top: Math.max(0, target.offsetTop - offset), behavior: 'smooth' }});
+                        }}
+                    }} catch(e) {{}}
                     return;
                 }}
                 if (attempts < maxAttempts) {{
-                    setTimeout(stableScroll, 120);
+                    setTimeout(stableScroll, 140);
                 }}
             }}
 
-            setTimeout(stableScroll, 180);
+            setTimeout(stableScroll, 220);
+            setTimeout(stableScroll, 650);
+            setTimeout(stableScroll, 1100);
         }})();
         </script>
         """,
@@ -3814,8 +3924,7 @@ def render_nav_group(title, page_names, current_page, key_prefix):
         ):
             st.session_state.page = page_name
             st.session_state.nav_compact_after_selection = True
-            set_confirmation(f"Opened {page_name}. WageWise is moving you to the selected section; if the browser blocks auto-scroll, the accordion fallback keeps the section visible below.", celebrate=False)
-            set_action_focus(focus_message_for_page(page_name), page=page_name)
+            set_confirmation(f"{page_name} opened.", celebrate=False)
             st.session_state.scroll_target_note = f"You are now in {page_name}."
             st.session_state.pending_auto_scroll_to_content = True
             st.rerun()
@@ -3862,22 +3971,11 @@ def page_navigation():
                 with st.container(border=True):
                     render_nav_group("Recovery & Technical", nav_groups["Recovery & Technical"], st.session_state.page, f"nav_{key_suffix}")
 
-    current_title, current_note = page_heading_text(st.session_state.page)
-    st.markdown(
-        f"""
-        <div class='ww-active-section-card'>
-            <div class='ww-active-section-title'>Currently open: {current_title}</div>
-            <div class='ww-active-section-note'>{current_note}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # V115.3: accordion-first navigation remains the fallback.
-    # Delayed JS auto-scroll is attempted after rerun, but content is still reachable if JS fails.
+    # V115.4: keep one notification only. The page heading below shows the active section.
+    # Delayed JS auto-scroll is attempted after rerun, while accordion remains the fallback.
     with st.expander("Open / change section", expanded=False):
         st.markdown(
-            "<div class='ww-nav-note'>Select a section below. WageWise will open it and attempt a stable auto-scroll after the page refreshes.</div>",
+            "<div class='ww-nav-note'>Select a section. The selected area opens below and auto-scroll will try to bring it into view.</div>",
             unsafe_allow_html=True,
         )
         _render_full_navigation("accordion")
@@ -4046,11 +4144,14 @@ def quick_advance_form():
             st.error("Please define at least one deduction: first month deduction or remaining months.")
             return
         cases = read_table("advance_cases")
+        schedule = read_table("advance_schedule")
         advance_id = f"ADV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         cases.loc[len(cases)] = [advance_id, emp_id, str(adv_date), amount, month_label(int(start_year), int(start_month)), first_deduction, remaining_months, "Open", remarks, st.session_state.user["email"], datetime.now().isoformat(timespec="seconds")]
-        write_table("advance_cases", cases)
-        create_advance_schedule(advance_id, emp_id, amount, int(start_year), int(start_month), first_deduction, remaining_months)
-        add_audit(st.session_state.user["email"], "SUPERVISOR_QUICK_CREATE_ADVANCE", f"{advance_id} {emp_id} ₹{amount}")
+        new_sched = rebuild_schedule_rows_for_advance(advance_id, emp_id, amount, int(start_year), int(start_month), first_deduction, remaining_months, updated_by=st.session_state.user["email"])
+        if not new_sched.empty:
+            schedule = pd.concat([schedule, new_sched], ignore_index=True)
+        b1, b2 = safe_write_advance_tables(cases, schedule, label="before_quick_advance_create", selected_advance_id=advance_id)
+        add_audit(st.session_state.user["email"], "SUPERVISOR_QUICK_CREATE_ADVANCE", f"{advance_id} {emp_id} ₹{amount}; backups: {b1}, {b2}")
         set_confirmation("Advance and schedule created successfully.", celebrate=True)
         st.session_state.quick_action = ""
         st.rerun()
@@ -4182,6 +4283,71 @@ def rebuild_schedule_rows_for_advance(advance_id, emp_id, amount, start_year, st
             })
     return pd.DataFrame(rows, columns=REQUIRED_FILES["advance_schedule"])
 
+
+
+
+def advance_integrity_report(cases, schedule):
+    """Return lightweight safety checks for advance master/schedule consistency."""
+    issues = []
+    cases = normalize_required_columns("advance_cases", cases.copy()) if cases is not None else pd.DataFrame(columns=REQUIRED_FILES["advance_cases"])
+    schedule = normalize_required_columns("advance_schedule", schedule.copy()) if schedule is not None else pd.DataFrame(columns=REQUIRED_FILES["advance_schedule"])
+    if not cases.empty and "Advance_ID" in cases.columns:
+        duplicate_cases = cases[cases["Advance_ID"].astype(str).duplicated(keep=False)]
+        if not duplicate_cases.empty:
+            issues.append(f"Duplicate Advance_ID found in master: {duplicate_cases['Advance_ID'].astype(str).nunique()} duplicate ID(s).")
+    if not schedule.empty and "Advance_ID" in schedule.columns and not cases.empty and "Advance_ID" in cases.columns:
+        case_ids = set(cases["Advance_ID"].astype(str))
+        orphan_schedule = schedule[~schedule["Advance_ID"].astype(str).isin(case_ids)]
+        if not orphan_schedule.empty:
+            issues.append(f"Orphan schedule rows found without master advance: {len(orphan_schedule)} row(s).")
+    if not cases.empty and "Advance_ID" in cases.columns and not schedule.empty and "Advance_ID" in schedule.columns:
+        for adv_id in cases["Advance_ID"].astype(str).unique():
+            case_rows = cases[cases["Advance_ID"].astype(str) == adv_id]
+            sched_rows = schedule[schedule["Advance_ID"].astype(str) == adv_id]
+            amount = safe_float(case_rows.iloc[0].get("Amount_Given", 0)) if not case_rows.empty else 0.0
+            sched_total = safe_numeric_series(sched_rows.get("Final_Deduction", pd.Series(dtype=float))).sum() if not sched_rows.empty else 0.0
+            if amount > 0 and sched_total - amount > 0.01:
+                issues.append(f"Advance {adv_id}: schedule total exceeds amount by ₹{sched_total-amount:,.2f}.")
+    return issues
+
+
+def validate_advance_write_safety(old_cases, new_cases, old_schedule, new_schedule, selected_advance_id=None):
+    """Block advance writes that could blank the master/schedule or alter unrelated master rows."""
+    old_cases = normalize_required_columns("advance_cases", old_cases.copy()) if old_cases is not None else pd.DataFrame(columns=REQUIRED_FILES["advance_cases"])
+    new_cases = normalize_required_columns("advance_cases", new_cases.copy()) if new_cases is not None else pd.DataFrame(columns=REQUIRED_FILES["advance_cases"])
+    old_schedule = normalize_required_columns("advance_schedule", old_schedule.copy()) if old_schedule is not None else pd.DataFrame(columns=REQUIRED_FILES["advance_schedule"])
+    new_schedule = normalize_required_columns("advance_schedule", new_schedule.copy()) if new_schedule is not None else pd.DataFrame(columns=REQUIRED_FILES["advance_schedule"])
+
+    if len(old_cases) > 0 and new_cases.empty:
+        raise ValueError("Advance safety blocked this save because it would blank the Advance Cases table.")
+    if len(old_schedule) > 0 and new_schedule.empty:
+        raise ValueError("Advance safety blocked this save because it would blank the Advance Schedule table.")
+    if selected_advance_id and "Advance_ID" in old_cases.columns and "Advance_ID" in new_cases.columns:
+        adv = str(selected_advance_id)
+        old_other = old_cases[old_cases["Advance_ID"].astype(str) != adv].reset_index(drop=True)
+        new_other = new_cases[new_cases["Advance_ID"].astype(str) != adv].reset_index(drop=True)
+        # Compare unrelated master rows after aligning to strings; selected row may change, others must not disappear.
+        if len(new_other) < len(old_other):
+            raise ValueError("Advance safety blocked this save because unrelated advance master rows would be removed.")
+        missing_ids = set(old_other["Advance_ID"].astype(str)) - set(new_other["Advance_ID"].astype(str))
+        if missing_ids:
+            raise ValueError(f"Advance safety blocked this save because unrelated Advance IDs would be lost: {', '.join(sorted(missing_ids)[:5])}.")
+    issues = advance_integrity_report(new_cases, new_schedule)
+    severe = [i for i in issues if "exceeds amount" in i or "Duplicate Advance_ID" in i]
+    if severe:
+        raise ValueError("Advance safety blocked this save: " + " | ".join(severe[:3]))
+    return True
+
+
+def safe_write_advance_tables(new_cases, new_schedule, label="advance_safe_write", selected_advance_id=None):
+    """Write both advance tables only after backup + integrity guardrails."""
+    old_cases = read_table("advance_cases")
+    old_schedule = read_table("advance_schedule")
+    b1, b2 = backup_advance_tables(label)
+    validate_advance_write_safety(old_cases, new_cases, old_schedule, new_schedule, selected_advance_id=selected_advance_id)
+    write_table("advance_cases", normalize_required_columns("advance_cases", new_cases).reset_index(drop=True))
+    write_table("advance_schedule", normalize_required_columns("advance_schedule", new_schedule).reset_index(drop=True))
+    return b1, b2
 
 
 def backup_leave_table(label="leave_correction"):
@@ -5006,17 +5172,23 @@ def advance_page():
             st.error("Please define at least one deduction: first month deduction or remaining months.")
             return
         cases = read_table("advance_cases")
+        schedule = read_table("advance_schedule")
         advance_id = f"ADV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         cases.loc[len(cases)] = [advance_id, emp_id, str(adv_date), amount, month_label(int(start_year), int(start_month)), first_deduction, remaining_months, "Open", remarks, st.session_state.user["email"], datetime.now().isoformat(timespec="seconds")]
-        write_table("advance_cases", cases)
-        create_advance_schedule(advance_id, emp_id, amount, int(start_year), int(start_month), first_deduction, remaining_months)
-        add_audit(st.session_state.user["email"], "CREATE_ADVANCE", f"{advance_id} {emp_id} ₹{amount}")
+        new_sched = rebuild_schedule_rows_for_advance(advance_id, emp_id, amount, int(start_year), int(start_month), first_deduction, remaining_months, updated_by=st.session_state.user["email"])
+        if not new_sched.empty:
+            schedule = pd.concat([schedule, new_sched], ignore_index=True)
+        b1, b2 = safe_write_advance_tables(cases, schedule, label="before_advance_create", selected_advance_id=advance_id)
+        add_audit(st.session_state.user["email"], "CREATE_ADVANCE", f"{advance_id} {emp_id} ₹{amount}; backups: {b1}, {b2}")
         set_confirmation("Advance and repayment schedule created.", celebrate=True)
         set_action_focus("Advance saved. You can add another advance or review Recent Entries / Salary Summary.", page="Advance Saved")
         st.rerun()
 
     cases = read_table("advance_cases")
     schedule = read_table("advance_schedule")
+    advance_issues = advance_integrity_report(cases, schedule)
+    if advance_issues:
+        st.warning("Advance safety review: " + " | ".join(advance_issues[:3]))
     st.markdown("#### Advance cases")
     st.dataframe(cases.tail(20), use_container_width=True, height=280)
 
@@ -5043,7 +5215,7 @@ def advance_page():
                 sy, sm = date.today().year, date.today().month
             new_start_month = c3.selectbox("Refund start month", list(range(1, 13)), index=int(sm)-1, format_func=lambda m: calendar.month_name[m])
             new_start_year = c4.number_input("Refund start year", min_value=2020, max_value=2100, value=int(sy), step=1)
-            new_first_deduction = c5.number_input("First month deduction", min_value=0.0, step=50.0, value=safe_float(selected.get("First_Deduction", 0)))
+            new_first_deduction = c5.number_input("First month deduction", min_value=0.0, step=50.0, value=safe_float(selected.get("First_Month_Deduction", 0)))
             new_remaining_months = st.number_input("Remaining months after first deduction", min_value=0, step=1, value=int(safe_float(selected.get("Remaining_Months", 0))))
             new_status = st.selectbox("Status", ["Open", "Closed", "Cancelled"], index=["Open", "Closed", "Cancelled"].index(selected.get("Status", "Open")) if selected.get("Status", "Open") in ["Open", "Closed", "Cancelled"] else 0)
             correction_remark = st.text_area("Mandatory admin correction remark", value="")
@@ -5077,12 +5249,12 @@ def advance_page():
             fresh_cases.loc[mask, "Advance_Date"] = str(new_adv_date)
             fresh_cases.loc[mask, "Amount_Given"] = new_amount
             fresh_cases.loc[mask, "Refund_Start_Month"] = month_label(int(new_start_year), int(new_start_month))
-            fresh_cases.loc[mask, "First_Deduction"] = new_first_deduction
+            fresh_cases.loc[mask, "First_Month_Deduction"] = new_first_deduction
             fresh_cases.loc[mask, "Remaining_Months"] = int(new_remaining_months)
             fresh_cases.loc[mask, "Status"] = new_status
             fresh_cases.loc[mask, "Remarks"] = f"{str(fresh_cases.loc[mask, 'Remarks'].iloc[0])} | ADMIN CORRECTION: {correction_remark}"
             fresh_cases.loc[mask, "Created_By"] = st.session_state.user["email"]
-            fresh_cases.loc[mask, "Created_At"] = datetime.now().isoformat(timespec="seconds")
+            fresh_cases.loc[mask, "Timestamp"] = datetime.now().isoformat(timespec="seconds")
 
             for col in REQUIRED_FILES["advance_schedule"]:
                 if col not in fresh_schedule.columns:
@@ -5095,8 +5267,13 @@ def advance_page():
             )
             fresh_schedule = pd.concat([fresh_schedule, new_sched], ignore_index=True)
 
-            write_table("advance_cases", fresh_cases.reset_index(drop=True))
-            write_table("advance_schedule", fresh_schedule.reset_index(drop=True))
+            try:
+                validate_advance_write_safety(read_table("advance_cases"), fresh_cases, read_table("advance_schedule"), fresh_schedule, selected_advance_id=adv_id)
+                write_table("advance_cases", fresh_cases.reset_index(drop=True))
+                write_table("advance_schedule", fresh_schedule.reset_index(drop=True))
+            except Exception as e:
+                st.error(f"Advance safety guard stopped this edit: {e}")
+                return
             add_audit(st.session_state.user["email"], "EDIT_ADVANCE_ADMIN_SAFE", f"{adv_id}; remark: {correction_remark}; backups: {b1}, {b2}")
             set_confirmation("Selected advance updated safely. Backup was created before change.", celebrate=True)
             st.info(f"Backup created: {b1} and {b2}")
@@ -5120,8 +5297,13 @@ def advance_page():
                     fresh_schedule.loc[fresh_schedule["Advance_ID"].astype(str) == adv_id, "Status"] = "Cancelled"
                     fresh_schedule.loc[fresh_schedule["Advance_ID"].astype(str) == adv_id, "Updated_By"] = st.session_state.user["email"]
                     fresh_schedule.loc[fresh_schedule["Advance_ID"].astype(str) == adv_id, "Updated_At"] = datetime.now().isoformat(timespec="seconds")
-                write_table("advance_cases", fresh_cases.reset_index(drop=True))
-                write_table("advance_schedule", fresh_schedule.reset_index(drop=True))
+                try:
+                    validate_advance_write_safety(read_table("advance_cases"), fresh_cases, read_table("advance_schedule"), fresh_schedule, selected_advance_id=adv_id)
+                    write_table("advance_cases", fresh_cases.reset_index(drop=True))
+                    write_table("advance_schedule", fresh_schedule.reset_index(drop=True))
+                except Exception as e:
+                    st.error(f"Advance safety guard stopped this cancellation: {e}")
+                    return
                 add_audit(st.session_state.user["email"], "CANCEL_ADVANCE_ADMIN_SAFE", f"{adv_id}; remark: {cancel_remark}; backups: {b1}, {b2}")
                 set_confirmation("Selected advance cancelled safely with backup.", celebrate=True)
                 st.rerun()
@@ -5702,7 +5884,7 @@ def employees_page():
     st.subheader("Employees")
     df = read_table("employees")
 
-    search = st.text_input("Search employee by name, ID, level or status", placeholder="Type Gudiya, E_Gudiya, L1, Active...")
+    search = st.text_input("Search employee by name, ID, level or status", placeholder="Type Gudiya, E_Gudiya, L0, L1, Active...")
     display_df = df.copy()
     if search.strip():
         s = search.strip().lower()
@@ -5716,15 +5898,17 @@ def employees_page():
         st.info("Only Admin can add or edit employees.")
         return
 
+    st.caption("Level rule: L0 = contractor paid by defined daily rate with 0 paid leaves and 0 leave encashment; L1 = 2 paid leaves/month; L2 = 4 paid leaves/month.")
+
     st.markdown("### Add New Employee")
     with st.form("add_employee_form"):
         name = st.text_input("Name")
         auto_emp_id = generate_emp_id_from_name(name)
         st.text_input("Auto Employee ID", value=auto_emp_id, disabled=True)
         c1, c2, c3 = st.columns(3)
-        level = c1.selectbox("Level", ["L1", "L2"], key="add_level")
-        salary = c2.number_input("Monthly Salary", min_value=0.0, step=500.0, key="add_salary")
-        extra = c3.number_input("Default Extra Paid Leaves", min_value=0.0, step=0.5, key="add_extra")
+        level = c1.selectbox("Level", LEVEL_OPTIONS, index=1, key="add_level", help="L0 = contractor: paid per day, no paid leave or encashment. L1 = 2 paid leaves. L2 = 4 paid leaves.")
+        salary = c2.number_input("Monthly Salary / L0 Daily Rate", min_value=0.0, step=500.0, key="add_salary", help="For L0 contractors, enter the defined per-day rate. For L1/L2, enter monthly salary.")
+        extra = c3.number_input("Default Extra Paid Leaves", min_value=0.0, step=0.5, key="add_extra", help="Ignored for L0 contractors because L0 has no paid leaves.")
         c4, c5 = st.columns(2)
         status = c4.selectbox("Status", ["Active", "Inactive"], key="add_status")
         supervisor = c5.text_input("Supervisor Email", value="supervisor@wagewise.local", key="add_supervisor")
@@ -5741,6 +5925,8 @@ def employees_page():
         if emp_id in df["Emp_ID"].astype(str).tolist():
             st.error("Duplicate blocked: generated Employee ID already exists.")
             return
+        if level == "L0":
+            extra = 0.0
         df.loc[len(df)] = [emp_id, clean_name, level, salary, extra, status, supervisor.strip()]
         write_table("employees", df)
         add_audit(st.session_state.user["email"], "ADD_EMPLOYEE", emp_id)
@@ -5763,11 +5949,12 @@ def employees_page():
         st.text_input("Employee ID", value=str(row["Emp_ID"]), disabled=True)
         c1, c2, c3 = st.columns(3)
         edit_name = c1.text_input("Name", value=str(row["Name"]))
-        edit_level = c2.selectbox("Level", ["L1", "L2"], index=0 if row["Level"] == "L1" else 1, key="edit_level")
+        current_level = normalize_employee_level(row["Level"])
+        edit_level = c2.selectbox("Level", LEVEL_OPTIONS, index=LEVEL_OPTIONS.index(current_level), key="edit_level", help="L0 = contractor: paid per day, no paid leave or encashment.")
         edit_status = c3.selectbox("Status", ["Active", "Inactive"], index=0 if str(row["Status"]) == "Active" else 1, key="edit_status")
         c4, c5 = st.columns(2)
-        edit_salary = c4.number_input("Monthly Salary", min_value=0.0, step=500.0, value=float(row["Monthly_Salary"]))
-        edit_extra = c5.number_input("Default Extra Paid Leaves", min_value=0.0, step=0.5, value=float(row["Extra_Paid_Leaves"]))
+        edit_salary = c4.number_input("Monthly Salary / L0 Daily Rate", min_value=0.0, step=500.0, value=float(row["Monthly_Salary"]), help="For L0 contractors, this value is treated as daily rate.")
+        edit_extra = c5.number_input("Default Extra Paid Leaves", min_value=0.0, step=0.5, value=float(row["Extra_Paid_Leaves"]), help="Ignored for L0 contractors.")
         edit_supervisor = st.text_input("Supervisor Email", value=str(row["Supervisor_Email"]))
         update_submit = st.form_submit_button("Update Employee")
     if update_submit:
@@ -5786,7 +5973,7 @@ def employees_page():
         df.loc[mask, "Name"] = clean_edit_name
         df.loc[mask, "Level"] = edit_level
         df.loc[mask, "Monthly_Salary"] = edit_salary
-        df.loc[mask, "Extra_Paid_Leaves"] = edit_extra
+        df.loc[mask, "Extra_Paid_Leaves"] = 0.0 if edit_level == "L0" else edit_extra
         df.loc[mask, "Status"] = edit_status
         df.loc[mask, "Supervisor_Email"] = edit_supervisor.strip()
         write_table("employees", df)
@@ -6202,15 +6389,13 @@ def tech_page():
                         cases.loc[case_mask, "Remaining_Months"] = remaining_months
                         cases.loc[case_mask, "Status"] = status
                         cases.loc[case_mask, "Remarks"] = remarks
-                        write_table("advance_cases", cases)
-
                         rebuilt = build_case_schedule_from_inputs(selected_case, emp_id_locked, amount, start_month, first_deduction, remaining_months, status)
                         schedule = schedule[schedule["Advance_ID"].astype(str) != selected_case].copy()
                         if not rebuilt.empty:
                             schedule = pd.concat([schedule, rebuilt], ignore_index=True)
-                        write_table("advance_schedule", schedule)
+                        b1, b2 = safe_write_advance_tables(cases, schedule, label="before_unified_advance_save", selected_advance_id=selected_case)
 
-                        add_audit(st.session_state.user["email"], "TECH_SAVE_UNIFIED_ADVANCE", selected_case)
+                        add_audit(st.session_state.user["email"], "TECH_SAVE_UNIFIED_ADVANCE", f"{selected_case}; backups: {b1}, {b2}")
                         set_confirmation(f"Unified advance saved and reconciled for {selected_case}.", celebrate=True)
                         st.rerun()
                 except Exception as e:
@@ -6267,12 +6452,11 @@ def tech_page():
                     cases = read_table("advance_cases")
                     schedule = read_table("advance_schedule")
                     cases.loc[len(cases)] = [new_id, emp_id_new, str(adv_date), amount_new, start_month_new, first_new, remaining_new, "Open", remarks_new, st.session_state.user["email"], datetime.now().isoformat(timespec="seconds")]
-                    write_table("advance_cases", cases)
                     new_sched = build_case_schedule_from_inputs(new_id, emp_id_new, amount_new, start_month_new, first_new, remaining_new, "Open")
                     if not new_sched.empty:
                         schedule = pd.concat([schedule, new_sched], ignore_index=True)
-                    write_table("advance_schedule", schedule)
-                    add_audit(st.session_state.user["email"], "TECH_CREATE_UNIFIED_ADVANCE", new_id)
+                    b1, b2 = safe_write_advance_tables(cases, schedule, label="before_unified_advance_create", selected_advance_id=new_id)
+                    add_audit(st.session_state.user["email"], "TECH_CREATE_UNIFIED_ADVANCE", f"{new_id}; backups: {b1}, {b2}")
                     set_confirmation(f"New unified advance created and reconciled: {new_id}.", celebrate=True)
                     st.rerun()
             except Exception as e:
@@ -6539,9 +6723,6 @@ def main():
     render_wagewise_header()
     show_confirmation_area()
     page = page_navigation()
-    if st.session_state.get("action_focus_message"):
-        show_action_focus()
-    render_section_update(page)
     render_page_heading(page)
     render_selected_content_anchor()
     if page == "Dashboard":
