@@ -1152,3 +1152,17 @@ Changes:
 Note:
 - Automatic fallback after a failed external Google login is not reliable/safe because the user leaves the app for Google OAuth.
 - The safe UX is: Google is primary, fallback is available only under support expander.
+
+
+# WageWise V106 Mobile Login Compact Fix
+
+Built on V105.
+
+Fix:
+- Desktop login remains fuller.
+- Phone login is now compact and less cluttered.
+- Google login button appears much higher on phone.
+- Feature chips and 3-step trust cards are hidden on phone only.
+- Login hero/card spacing reduced on phone.
+- Fallback/support login remains hidden under expander.
+- No payroll/leave/advance calculation changes.

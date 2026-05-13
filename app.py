@@ -1988,6 +1988,72 @@ def apply_theme():
         }}
     }}
 
+    
+    /* V106 mobile login compact fix */
+    @media (max-width: 768px) {{
+        .login-page-shell {{
+            margin: 0 auto 4px auto !important;
+        }}
+        .login-hero {{
+            min-height: auto !important;
+            padding: 14px 12px !important;
+            margin: 4px auto 8px auto !important;
+            border-radius: 18px !important;
+            box-shadow: 0 6px 16px rgba(11,79,113,0.08) !important;
+        }}
+        .login-badge {{
+            padding: 5px 12px !important;
+            margin-bottom: 7px !important;
+            font-size: 12px !important;
+        }}
+        .login-main-title {{
+            font-size: 21px !important;
+            line-height: 1.12 !important;
+            margin-bottom: 6px !important;
+        }}
+        .login-main-subtitle {{
+            font-size: 12px !important;
+            line-height: 1.32 !important;
+            margin-bottom: 8px !important;
+        }}
+        .login-feature-row {{
+            display: none !important;
+        }}
+        .login-trust-grid {{
+            display: none !important;
+        }}
+        .login-primary-card {{
+            padding: 10px 12px !important;
+            margin: 4px 0 8px 0 !important;
+            border-radius: 16px !important;
+            box-shadow: 0 4px 12px rgba(11,79,113,0.06) !important;
+        }}
+        .login-card-title {{
+            font-size: 15px !important;
+            margin: 0 0 3px 0 !important;
+        }}
+        .login-card-copy {{
+            font-size: 12px !important;
+            line-height: 1.25 !important;
+            margin-top: 2px !important;
+        }}
+        .login-help {{
+            font-size: 11px !important;
+            margin-top: 5px !important;
+        }}
+        div[data-testid="stButton"] button {{
+            min-height: 42px !important;
+            font-size: 15px !important;
+            font-weight: 800 !important;
+        }}
+        div[data-testid="stExpander"] {{
+            margin-top: 6px !important;
+        }}
+        .block-container {{
+            padding-top: 0.75rem !important;
+        }}
+    }}
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -2319,8 +2385,8 @@ def login_screen():
     <div class='login-page-shell'>
         <div class='login-hero'>
             <div class='login-badge'>WageWise</div>
-            <div class='login-main-title'>Payroll clarity, without manual confusion.</div>
-            <div class='login-main-subtitle'>Manage leaves, advances, payroll review and approvals through one guided salary workflow.</div>
+            <div class='login-main-title'>Payroll clarity. Faster access.</div>
+            <div class='login-main-subtitle'>Manage leaves, advances, payroll review and approvals in one guided workflow.</div>
             <div class='login-feature-row'>
                 <div>✓ Google sign-in</div>
                 <div>✓ Admin / Supervisor access</div>
