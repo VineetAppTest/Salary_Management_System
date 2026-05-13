@@ -34,7 +34,7 @@ LEAVE_UNITS = {
 }
 
 
-BUILD_VERSION = "V115"
+BUILD_VERSION = "V115.2"
 BUILD_LABEL = "V115.1 · Client Redirect Visibility Fix"
 NAV_SCROLL_ANCHOR = "ww-section-content-anchor"
 
@@ -3760,7 +3760,7 @@ def render_nav_group(title, page_names, current_page, key_prefix):
         ):
             st.session_state.page = page_name
             st.session_state.nav_compact_after_selection = True
-            set_confirmation(f"Redirected to {page_name}. The selected section is loaded directly below — no scrolling required.", celebrate=False)
+            set_confirmation(f"Opened {page_name}. The section chooser is collapsed and the selected section is visible below.", celebrate=False)
             set_action_focus(focus_message_for_page(page_name), page=page_name)
             st.session_state.scroll_target_note = f"You are now in {page_name}."
             st.rerun()
@@ -3790,7 +3790,7 @@ def page_navigation():
     if "page" not in st.session_state or st.session_state.page not in pages:
         st.session_state.page = pages[0]
 
-    def _render_full_navigation(key_suffix="main"):
+    def _render_full_navigation(key_suffix="accordion"):
         if user["role"] == "Supervisor":
             with st.container(border=True):
                 render_nav_group("Supervisor", nav_groups["Supervisor"], st.session_state.page, f"nav_supervisor_{key_suffix}")
@@ -3807,31 +3807,25 @@ def page_navigation():
                 with st.container(border=True):
                     render_nav_group("Recovery & Technical", nav_groups["Recovery & Technical"], st.session_state.page, f"nav_{key_suffix}")
 
-    compact_nav = bool(st.session_state.get("nav_compact_after_selection"))
-    if compact_nav:
-        current_title, current_note = page_heading_text(st.session_state.page)
+    current_title, current_note = page_heading_text(st.session_state.page)
+    st.markdown(
+        f"""
+        <div class='ww-active-section-card'>
+            <div class='ww-active-section-title'>Currently open: {current_title}</div>
+            <div class='ww-active-section-note'>{current_note}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # V115.2: accordion-first navigation. The section chooser stays collapsed by default,
+    # so the selected section content is visible immediately without scrolling or JS auto-scroll.
+    with st.expander("Open / change section", expanded=False):
         st.markdown(
-            f"""
-            <div class='ww-active-section-card'>
-                <div class='ww-active-section-title'>Loaded section: {current_title}</div>
-                <div class='ww-active-section-note'>The full navigation is collapsed so the selected section appears immediately below. Open “Change section” only when you need to move elsewhere.</div>
-            </div>
-            """,
+            "<div class='ww-nav-note'>Select a section below. The chooser will collapse again and the selected section will open immediately on the page.</div>",
             unsafe_allow_html=True,
         )
-        with st.expander("Change section", expanded=False):
-            st.markdown(
-                "<div class='ww-nav-note'>Choose another section. WageWise will redirect and keep the selected section visible without auto-scroll.</div>",
-                unsafe_allow_html=True,
-            )
-            _render_full_navigation("compact")
-    else:
-        st.markdown("<div class='nav-label'>Navigation</div>", unsafe_allow_html=True)
-        st.markdown(
-            "<div class='ww-nav-note'>Tap a section. WageWise will redirect to that section directly; no auto-scroll is used.</div>",
-            unsafe_allow_html=True,
-        )
-        _render_full_navigation("main")
+        _render_full_navigation("accordion")
 
     allowed_roles_for_login = user_allowed_roles(auth_user)
     show_switch_role = len(allowed_roles_for_login) > 1
