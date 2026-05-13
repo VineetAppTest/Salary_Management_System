@@ -1910,6 +1910,84 @@ def apply_theme():
         }}
     }}
 
+    
+    /* V105 fuller login screen */
+    .login-page-shell {{
+        max-width: 980px;
+        margin: 14px auto 10px auto;
+    }}
+    .login-primary-card {{
+        background: #FFFFFF;
+        border: 1px solid #D7E6EF;
+        border-radius: 22px;
+        padding: 18px 20px;
+        margin: 8px 0 12px 0;
+        box-shadow: 0 10px 28px rgba(11,79,113,0.08);
+        text-align: center;
+    }}
+    .login-card-copy {{
+        color: #52616F;
+        font-weight: 600;
+        font-size: 14px;
+        line-height: 1.45;
+        margin-top: 4px;
+    }}
+    .login-trust-grid {{
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin: 12px auto 18px auto;
+    }}
+    .login-trust-card {{
+        background: #FFFFFF;
+        border: 1px solid #DCE8EF;
+        border-radius: 18px;
+        padding: 14px 14px;
+        box-shadow: 0 6px 20px rgba(11,79,113,0.06);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: #17324D;
+        font-weight: 750;
+    }}
+    .login-trust-card b {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        background: #E6FFF7;
+        color: #0E9384;
+        font-weight: 900;
+    }}
+    @media (min-width: 900px) {{
+        .login-hero {{
+            min-height: 250px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }}
+        .login-main-title {{
+            font-size: 36px !important;
+        }}
+        .login-main-subtitle {{
+            max-width: 640px;
+            margin-left: auto;
+            margin-right: auto;
+            font-size: 16px !important;
+        }}
+    }}
+    @media (max-width: 768px) {{
+        .login-trust-grid {{
+            grid-template-columns: 1fr;
+            gap: 8px;
+        }}
+        .login-trust-card {{
+            padding: 11px 12px;
+        }}
+    }}
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -2136,9 +2214,13 @@ def lookup_user_access_by_email(email, display_name=None, auto_create=False):
     return None
 
 def oidc_login_panel():
-    st.markdown("<div class='login-card-title'>Production login</div>", unsafe_allow_html=True)
-    st.caption("Use Google organisation login. WageWise will then check whether your verified email has Admin or Supervisor access.")
-    st.button("Log in with Google", on_click=st.login, use_container_width=True, type="primary", key="oidc_login_button")
+    st.markdown("""
+    <div class='login-primary-card'>
+        <div class='login-card-title'>Secure organisation login</div>
+        <div class='login-card-copy'>Continue with Google. WageWise will verify your email and open only the areas enabled for you.</div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.button("Continue with Google", on_click=st.login, use_container_width=True, type="primary", key="oidc_login_button")
 
 def handle_oidc_authenticated_user():
     """Authorize a successfully logged-in OIDC user inside WageWise."""
@@ -2234,40 +2316,48 @@ def ensure_user_access_columns(users):
 
 def login_screen():
     st.markdown("""
-    <div class='login-hero'>
-        <div class='login-badge'>WageWise</div>
-        <div class='login-main-title'>Smarter salary management</div>
-        <div class='login-main-subtitle'>Leave, advances and payroll in one guided flow.</div>
-        <div class='login-feature-row'>
-            <div>✓ Guided payroll</div>
-            <div>✓ Role-based access</div>
-            <div>✓ Mobile friendly</div>
+    <div class='login-page-shell'>
+        <div class='login-hero'>
+            <div class='login-badge'>WageWise</div>
+            <div class='login-main-title'>Payroll clarity, without manual confusion.</div>
+            <div class='login-main-subtitle'>Manage leaves, advances, payroll review and approvals through one guided salary workflow.</div>
+            <div class='login-feature-row'>
+                <div>✓ Google sign-in</div>
+                <div>✓ Admin / Supervisor access</div>
+                <div>✓ Mobile-ready workflow</div>
+                <div>✓ Safer corrections</div>
+            </div>
+        </div>
+        <div class='login-trust-grid'>
+            <div class='login-trust-card'><b>1</b><span>Capture leave and advances</span></div>
+            <div class='login-trust-card'><b>2</b><span>Review salary summary</span></div>
+            <div class='login-trust-card'><b>3</b><span>Approve with confidence</span></div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    left, center, right = st.columns([0.9, 2.2, 0.9])
+    left, center, right = st.columns([0.75, 2.5, 0.75])
     with center:
+        submitted = False
         if oidc_enabled():
-            oidc_tab, fallback_tab = st.tabs(["Organisation Login", "Fallback Login"])
-            with oidc_tab:
-                oidc_login_panel()
-            with fallback_tab:
-                st.caption("Fallback/UAT login remains available for controlled testing.")
+            oidc_login_panel()
+            with st.expander("Fallback / support login", expanded=False):
+                st.caption("Use this only if Google login is not available and the administrator has issued a fallback password.")
                 with st.form("single_login_form"):
                     email = st.text_input("Email", value="admin@wagewise.local", placeholder="name@wagewise.local")
-                    password = st.text_input("Password", type="password", placeholder="Enter password")
-                    submitted = st.form_submit_button("Login securely", use_container_width=True, type="primary")
+                    password = st.text_input("Fallback password", type="password", placeholder="Enter fallback password")
+                    submitted = st.form_submit_button("Login with fallback password", use_container_width=True)
         else:
             st.markdown("<div class='login-card-title'>Sign in to continue</div>", unsafe_allow_html=True)
-            st.caption("OIDC is not configured yet. Using WageWise fallback login.")
+            st.caption("Google login is not configured yet. Using fallback login.")
             with st.form("single_login_form"):
                 email = st.text_input("Email", value="admin@wagewise.local", placeholder="name@wagewise.local")
                 password = st.text_input("Password", type="password", placeholder="Enter password")
                 submitted = st.form_submit_button("Login securely", use_container_width=True, type="primary")
-        st.markdown("<div class='login-help'>Use the login shared by your WageWise administrator.</div>", unsafe_allow_html=True)
 
-    if "submitted" in locals() and submitted:
+        st.markdown("<div class='login-help'>Access is controlled by your WageWise administrator.</div>", unsafe_allow_html=True)
+
+    if submitted:
         user = authenticate(email, password)
         if user:
             st.session_state.auth_user = user

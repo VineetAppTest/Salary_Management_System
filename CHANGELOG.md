@@ -1297,3 +1297,20 @@ Fix:
 - OIDC users still map to Users & Access by exact Gmail ID.
 
 No payroll/leave/advance calculation changes.
+
+
+# WageWise V105 Login Experience Polish
+
+Built on V104 OIDC minimal pattern fix.
+
+Changes:
+- Login screen made fuller and more polished for desktop.
+- Removed equal Organisation/Fallback tabs.
+- Primary login is now a single clear button: Continue with Google.
+- Fallback/UAT login is hidden under a small expander: Fallback / support login.
+- Keeps the working minimal OIDC pattern from V104.
+- No payroll/leave/advance calculation changes.
+
+Note:
+- Automatic fallback after a failed external Google login is not reliable/safe because the user leaves the app for Google OAuth.
+- The safe UX is: Google is primary, fallback is available only under support expander.
