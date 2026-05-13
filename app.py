@@ -51,13 +51,49 @@ def is_contractor_level(level):
     return normalize_employee_level(level) == "L0"
 
 
-BUILD_VERSION = "V116.1"
-BUILD_LABEL = "V116.1 · Backend Actions Applied + Final Client Ship Ready"
+def employee_joining_date(emp):
+    """Return Date of Joining as Timestamp, or NaT if not provided/invalid."""
+    try:
+        return parse_app_date_value(emp.get("Date_of_Joining", ""))
+    except Exception:
+        return pd.NaT
+
+
+def employee_service_window_for_month(emp, year, month):
+    """Calculate whether employee is eligible for payroll in month and payable service days.
+
+    Rule: if Date of Joining is after the payroll month, employee is omitted.
+    If joining happens within the payroll month, salary and paid leave quota are pro-rated
+    from joining date through month end. Blank DOJ means existing employee / full-month eligible.
+    """
+    total_days = calendar.monthrange(int(year), int(month))[1]
+    month_start = pd.Timestamp(year=int(year), month=int(month), day=1)
+    month_end = pd.Timestamp(year=int(year), month=int(month), day=total_days)
+    join_dt = employee_joining_date(emp)
+    if pd.isna(join_dt):
+        return True, month_start, total_days, 1.0, join_dt
+    join_dt = pd.Timestamp(join_dt).normalize()
+    if join_dt > month_end:
+        return False, None, 0, 0.0, join_dt
+    service_start = max(join_dt, month_start)
+    service_days = max(0, (month_end - service_start).days + 1)
+    fraction = service_days / total_days if total_days else 0.0
+    return service_days > 0, service_start, service_days, fraction, join_dt
+
+
+def prorate_paid_leave_quota(level, service_fraction):
+    base = paid_leave_allowance_for_level(level)
+    # Round down to nearest half-day to avoid over-crediting partial month leave.
+    return max(0.0, int((base * float(service_fraction)) * 2) / 2.0)
+
+
+BUILD_VERSION = "V116.5"
+BUILD_LABEL = "V116.5 · Daily Leave Email Automation"
 NAV_SCROLL_ANCHOR = "ww-section-content-anchor"
 
 REQUIRED_FILES = {
     "users": ["email", "name", "role", "password_hash", "active", "allow_admin", "allow_supervisor"],
-    "employees": ["Emp_ID", "Name", "Level", "Monthly_Salary", "Extra_Paid_Leaves", "Status", "Supervisor_Email"],
+    "employees": ["Emp_ID", "Name", "Level", "Monthly_Salary", "Extra_Paid_Leaves", "Status", "Supervisor_Email", "Date_of_Joining"],
     "leave_entries": ["Date", "Emp_ID", "Leave_Type", "Remarks", "Supervisor", "Timestamp", "Status"],
     "employee_holidays": ["Holiday_ID", "Date", "Emp_ID", "Festival_Name", "Remarks", "Created_By", "Timestamp"],
     "advance_cases": ["Advance_ID", "Emp_ID", "Advance_Date", "Amount_Given", "Refund_Start_Month", "First_Month_Deduction", "Remaining_Months", "Status", "Remarks", "Created_By", "Timestamp"],
@@ -237,7 +273,11 @@ def ensure_database_tables():
                     continue
                 _, missing = check_db_table_columns(conn, name)
                 if missing:
-                    missing_columns.append(f"{db_table_name(name)}: {', '.join(missing)}")
+                    for col in missing:
+                        try:
+                            conn.execute(text(f'ALTER TABLE "{db_table_name(name)}" ADD COLUMN "{col}" TEXT'))
+                        except Exception:
+                            missing_columns.append(f"{db_table_name(name)}: {col}")
         if missing_tables or missing_columns:
             st.warning(
                 "Cloud Storage setup is not ready. Using Local fallback. "
@@ -296,6 +336,20 @@ def write_table_db(name, df, allow_empty_restore=False):
                 raise ValueError(f"Blocked unsafe empty write for {name}. Existing rows: {existing_count}. Use Section Rollback or explicit recovery if clearing is intended.")
 
         expected_count = len(df)
+        # V116.4: safely extend Cloud Storage table columns before writing.
+        # This allows non-destructive additions like Date_of_Joining without forcing a table reset.
+        with engine.begin() as conn:
+            try:
+                existing_cols = [r[0] for r in conn.execute(text("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = :table_name
+                """), {"table_name": table}).fetchall()]
+                for col in df.columns:
+                    if col not in existing_cols:
+                        conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{col}" TEXT'))
+            except Exception:
+                pass
+
         with engine.begin() as conn:
             try:
                 conn.execute(text("SET LOCAL statement_timeout = '60000'"))
@@ -419,6 +473,16 @@ def seed_supabase_from_csv(overwrite=True):
             df = read_table_csv(name)
             if not df.empty:
                 df = normalize_required_columns(name, df).astype(str)
+                try:
+                    existing_cols = [r[0] for r in conn.execute(text("""
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = :table_name
+                    """), {"table_name": table}).fetchall()]
+                    for col in df.columns:
+                        if col not in existing_cols:
+                            conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{col}" TEXT'))
+                except Exception:
+                    pass
                 df.to_sql(table, engine, if_exists="append", index=False, method="multi", chunksize=100)
     clear_db_table_cache()
     return "Cloud Storage seeded from CSV successfully."
@@ -902,7 +966,7 @@ def build_mobile_salary_summary(month_value):
             advance_left = safe_float(p.get("Advance_Balance_Close", 0))
 
         leaves_taken = safe_float(p.get("Leave_Units", 0))
-        base_leave_allowed = paid_leave_allowance_for_level(level)
+        base_leave_allowed = safe_float(p.get("Paid_Leave_Allowed", paid_leave_allowance_for_level(level)))
         report_lop = max(0.0, leaves_taken - base_leave_allowed)
         leave_deduction_cost = round(report_lop * daily_wage, 2)
 
@@ -915,9 +979,9 @@ def build_mobile_salary_summary(month_value):
             "Advance Prior Month": round(advance_prior_month, 2),
             "Advance Current Month": round(advance_current_month, 2),
             "Total Advance": round(total_advance, 2),
-            "Leaves Taken": leaves_taken,
+            "Total Leaves Taken": leaves_taken,
             "Deduction for the Month": round(deduction_for_month, 2),
-            "Leave Deduction Cost": leave_deduction_cost,
+            "Leave Deduction Cost on extra leaves": leave_deduction_cost,
             "Net Salary to be Paid": round(net_salary, 2),
             "Advance Left": round(advance_left, 2),
         })
@@ -3555,29 +3619,34 @@ def calculate_employee_payroll(emp, year, month, extra_leave_override=None, spec
 
     emp_id = str(emp["Emp_ID"])
     level = normalize_employee_level(emp["Level"])
+    eligible_for_month, service_start, service_days, service_fraction, join_dt = employee_service_window_for_month(emp, year, month)
+    if not eligible_for_month:
+        return None, []
+
     salary_value = safe_float(emp.get("Monthly_Salary", 0))
     if is_contractor_level(level):
         # L0 contractor: stored salary field is treated as the defined per-day rate.
         daily_wage = salary_value
-        monthly_salary = round(daily_wage * total_days, 2)
+        monthly_salary = round(daily_wage * service_days, 2)
         base_extra = 0.0
         extra = 0.0
     else:
-        monthly_salary = salary_value
-        daily_wage = monthly_salary / total_days if total_days else 0.0
+        full_month_salary = salary_value
+        daily_wage = full_month_salary / total_days if total_days else 0.0
+        monthly_salary = round(daily_wage * service_days, 2)
         base_extra = float(emp.get("Extra_Paid_Leaves", 0) or 0)
         extra = base_extra if extra_leave_override is None else float(extra_leave_override)
 
     emp_holidays = employee_holidays[employee_holidays["Emp_ID"].astype(str) == emp_id].copy() if not employee_holidays.empty else employee_holidays.copy()
     if not emp_holidays.empty:
         emp_holidays["Date_dt"] = parse_app_date_series(emp_holidays["Date"])
-        emp_holidays = emp_holidays[(emp_holidays["Date_dt"] >= month_start) & (emp_holidays["Date_dt"] <= month_end)]
+        emp_holidays = emp_holidays[(emp_holidays["Date_dt"] >= service_start) & (emp_holidays["Date_dt"] <= month_end)]
     holiday_exclusions = float(len(emp_holidays))
 
     if is_contractor_level(level):
         paid_leave_allowed = 0.0
     else:
-        paid_leave_allowed = paid_leave_allowance_for_level(level) + extra + holiday_exclusions
+        paid_leave_allowed = prorate_paid_leave_quota(level, service_fraction) + extra + holiday_exclusions
 
     if leave_entries.empty:
         emp_leaves = pd.DataFrame(columns=list(leave_entries.columns) + ["Date_dt"])
@@ -3586,7 +3655,7 @@ def calculate_employee_payroll(emp, year, month, extra_leave_override=None, spec
         emp_leaves = leave_entries[leave_entries["Emp_ID"].astype(str).apply(lambda x: normalize_emp_id_value(x) in valid_emp_ids)].copy()
         if not emp_leaves.empty:
             emp_leaves["Date_dt"] = parse_app_date_series(emp_leaves["Date"])
-            emp_leaves = emp_leaves[(emp_leaves["Date_dt"] >= month_start) & (emp_leaves["Date_dt"] <= month_end)]
+            emp_leaves = emp_leaves[(emp_leaves["Date_dt"] >= service_start) & (emp_leaves["Date_dt"] <= month_end)]
 
     # V116.2 guard: if the employee has no leave rows after filtering,
     # emp_leaves may be an empty DataFrame without Date_dt. Payroll must
@@ -3682,7 +3751,7 @@ def calculate_employee_payroll(emp, year, month, extra_leave_override=None, spec
 
     paid_leave_used = min(leave_units, paid_leave_allowed)
     lop_days = max(0, leave_units - paid_leave_allowed)
-    present_days = total_days - lop_days
+    present_days = max(0.0, service_days - lop_days)
     unused_leaves = max(0, paid_leave_allowed - paid_leave_used)
     encashment = unused_leaves * daily_wage
 
@@ -3787,6 +3856,8 @@ def calculate_employee_payroll(emp, year, month, extra_leave_override=None, spec
         "Name": emp["Name"],
         "Level": level,
         "Monthly_Salary": monthly_salary,
+        "Date_of_Joining": "" if pd.isna(join_dt) else str(pd.Timestamp(join_dt).date()),
+        "Service_Days_For_Month": service_days,
         "Total_Days": total_days,
         "Daily_Wage": round(daily_wage, 2),
         "Leave_Units": leave_units,
@@ -3863,8 +3934,13 @@ def reconcile_payroll_month(month_value, payroll_df=None):
     rows_to_add = []
     for _, emp in active.iterrows():
         emp_id = str(emp["Emp_ID"])
+        eligible, _, _, _, _ = employee_service_window_for_month(emp, yr, mon)
+        if not eligible:
+            continue
         if emp_id not in existing_emp_ids:
             item, _ = calculate_employee_payroll(emp, yr, mon)
+            if item is None:
+                continue
             item["Payroll_Status"] = "Reconciled"
             rows_to_add.append(item)
 
@@ -3894,7 +3970,12 @@ def calculate_payroll(year, month, special_config=None):
     employees = employees[employees["Status"].astype(str).str.lower() == "active"].copy()
     rows, logs = [], []
     for _, emp in employees.iterrows():
+        eligible, _, _, _, _ = employee_service_window_for_month(emp, year, month)
+        if not eligible:
+            continue
         item, leave_logs = calculate_employee_payroll(emp, year, month, special_config=special_config)
+        if item is None:
+            continue
         rows.append(item)
         logs.extend(leave_logs)
     payroll_df = pd.DataFrame(rows)
@@ -4690,12 +4771,12 @@ def explain_salary_row(row):
     name = row.get("Name", row.get("Emp_ID", "Employee"))
     total = row.get("Total Pay", row.get("Monthly_Salary", ""))
     daily = row.get("Daily Wage", row.get("Daily_Wage", ""))
-    leaves = row.get("Leaves Taken", row.get("Leave_Units", ""))
-    leave_cost = row.get("Leave Deduction Cost", row.get("Leave_Deduction_Cost", ""))
+    leaves = row.get("Total Leaves Taken", row.get("Leaves Taken", row.get("Leave_Units", "")))
+    leave_cost = row.get("Leave Deduction Cost on extra leaves", row.get("Leave Deduction Cost", row.get("Leave_Deduction_Cost", "")))
     total_adv = row.get("Total Advance", "")
     adv_ded = row.get("Deduction for the Month", row.get("Advance_Deduction", ""))
     net = row.get("Net Salary to be Paid", row.get("Final_Salary_With_Special", ""))
-    return f"{name}: Total Pay {total}, Daily Wage {daily}, Leaves Taken {leaves}, Leave Deduction {leave_cost}, Total Advance {total_adv}, Monthly Advance Deduction {adv_ded}, Net Salary {net}."
+    return f"{name}: Total Pay {total}, Daily Wage {daily}, Total Leaves Taken {leaves}, Leave Deduction Cost on extra leaves {leave_cost}, Total Advance {total_adv}, Monthly Advance Deduction {adv_ded}, Net Salary {net}."
 
 
 
@@ -5563,7 +5644,7 @@ def render_salary_summary_cards(summary):
     employees_count = len(summary)
     total_net = summary["Net Salary to be Paid"].sum() if "Net Salary to be Paid" in summary else 0
     total_adv_left = summary["Advance Left"].sum() if "Advance Left" in summary else 0
-    total_leave_cost = summary["Leave Deduction Cost"].sum() if "Leave Deduction Cost" in summary else 0
+    total_leave_cost = summary["Leave Deduction Cost on extra leaves"].sum() if "Leave Deduction Cost on extra leaves" in summary else 0
     html = f"""
     <div class='summary-card-grid'>
         <div class='summary-card'>
@@ -5586,7 +5667,7 @@ def render_sticky_salary_table(summary):
     import html as html_lib
     money_cols = {
         "Total Pay", "Daily Wage", "Advance Prior Month", "Advance Current Month",
-        "Total Advance", "Deduction for the Month", "Leave Deduction Cost",
+        "Total Advance", "Deduction for the Month", "Leave Deduction Cost on extra leaves",
         "Net Salary to be Paid", "Advance Left"
     }
     cols = list(summary.columns)
@@ -6077,6 +6158,9 @@ def employee_profile_page():
         submitted = st.form_submit_button("Recalculate Selected Employee Payroll")
     if submitted:
         item, logs = calculate_employee_payroll(emp, yr, mon, extra_leave_override, special_override, advance_override, special_config=special_config_profile)
+        if item is None:
+            st.warning("This employee is omitted from this payroll month because the Date of Joining is after the selected salary month.")
+            return
 
         regular_units_note = safe_float(item.get("Regular_Leave_Units_Before_Special", item.get("Leave_Units", 0)))
         special_units_note = safe_float(item.get("Special_Impact_Leave_Units", item.get("Leave_Units", 0)))
@@ -6138,7 +6222,7 @@ def employees_page():
         st.info("Only Admin can add or edit employees.")
         return
 
-    st.caption("Level rule: L0 = contractor paid by defined daily rate with 0 paid leaves and 0 leave encashment; L1 = 2 paid leaves/month; L2 = 4 paid leaves/month.")
+    st.caption("Level rule: L0 = contractor paid by defined daily rate with 0 paid leaves and 0 leave encashment; L1 = 2 paid leaves/month; L2 = 4 paid leaves/month. Date of Joining controls first-month pro-rata salary/leave and future-month omission.")
 
     st.markdown("### Add New Employee")
     with st.form("add_employee_form"):
@@ -6152,6 +6236,7 @@ def employees_page():
         c4, c5 = st.columns(2)
         status = c4.selectbox("Status", ["Active", "Inactive"], key="add_status")
         supervisor = c5.text_input("Supervisor Email", value="supervisor@wagewise.local", key="add_supervisor")
+        doj = st.date_input("Date of Joining", value=date.today(), key="add_doj", help="Used for first-month pro-rata salary and leave quota. If employee joins after a payroll month, they are omitted from that month.")
         add_submit = st.form_submit_button("Add Employee")
     if add_submit:
         clean_name = name.strip()
@@ -6167,7 +6252,7 @@ def employees_page():
             return
         if level == "L0":
             extra = 0.0
-        df.loc[len(df)] = [emp_id, clean_name, level, salary, extra, status, supervisor.strip()]
+        df.loc[len(df)] = {"Emp_ID": emp_id, "Name": clean_name, "Level": level, "Monthly_Salary": salary, "Extra_Paid_Leaves": extra, "Status": status, "Supervisor_Email": supervisor.strip(), "Date_of_Joining": str(doj)}
         write_table("employees", df)
         add_audit(st.session_state.user["email"], "ADD_EMPLOYEE", emp_id)
         st.success(f"Employee added with ID: {emp_id}")
@@ -6196,6 +6281,7 @@ def employees_page():
         edit_salary = c4.number_input("Monthly Salary / L0 Daily Rate", min_value=0.0, step=500.0, value=float(row["Monthly_Salary"]), help="For L0 contractors, this value is treated as daily rate.")
         edit_extra = c5.number_input("Default Extra Paid Leaves", min_value=0.0, step=0.5, value=float(row["Extra_Paid_Leaves"]), help="Ignored for L0 contractors.")
         edit_supervisor = st.text_input("Supervisor Email", value=str(row["Supervisor_Email"]))
+        edit_doj = st.text_input("Date of Joining (YYYY-MM-DD, optional)", value=str(row.get("Date_of_Joining", "")).strip(), help="Blank means existing employee/full-month eligible. Use YYYY-MM-DD for new employees to activate pro-rata logic.")
         update_submit = st.form_submit_button("Update Employee")
     if update_submit:
         clean_edit_name = edit_name.strip()
@@ -6216,6 +6302,7 @@ def employees_page():
         df.loc[mask, "Extra_Paid_Leaves"] = 0.0 if edit_level == "L0" else edit_extra
         df.loc[mask, "Status"] = edit_status
         df.loc[mask, "Supervisor_Email"] = edit_supervisor.strip()
+        df.loc[mask, "Date_of_Joining"] = edit_doj.strip()
         write_table("employees", df)
         add_audit(st.session_state.user["email"], "EDIT_EMPLOYEE", selected_emp_id)
         set_confirmation("Employee updated successfully.", celebrate=True)
@@ -6942,6 +7029,31 @@ def logs_page():
     st.markdown("#### Cleansing log")
     st.dataframe(read_table("cleansing_log").tail(150), use_container_width=True)
 
+def render_to_top_button():
+    """Small bottom utility to jump back to the top of the app without manual scrolling."""
+    st.markdown("---")
+    if st.button("⬆ To the Top", use_container_width=True, key="ww_to_top_button"):
+        components.html(
+            """
+            <script>
+            (function() {
+                function scrollTopNow() {
+                    try { window.parent.scrollTo({top: 0, behavior: 'smooth'}); } catch(e) {}
+                    try { window.parent.document.querySelector('[data-testid="stAppViewContainer"]').scrollTo({top: 0, behavior: 'smooth'}); } catch(e) {}
+                    try { window.parent.document.documentElement.scrollTop = 0; } catch(e) {}
+                    try { window.parent.document.body.scrollTop = 0; } catch(e) {}
+                }
+                scrollTopNow();
+                setTimeout(scrollTopNow, 150);
+                setTimeout(scrollTopNow, 500);
+            })();
+            </script>
+            """,
+            height=0,
+            scrolling=False,
+        )
+
+
 def main():
     st.set_page_config(page_title="WageWise", page_icon="💼", layout="wide")
     apply_theme()
@@ -6996,6 +7108,7 @@ def main():
     elif page == "Logs":
         logs_page()
 
+    render_to_top_button()
     trigger_auto_scroll_to_content()
 
     if st.session_state.get("scroll_target_note"):

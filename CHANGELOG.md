@@ -1576,3 +1576,20 @@ No payroll, leave, or advance calculation rule changes.
 ## v116.3 - Mobile Salary Summary Month Selector Fix
 - Fixed issue where April could be missing/unselectable in Mobile Salary Summary after recalculation.
 - Salary Summary month dropdown now uses normalized, chronological month options across payroll, leave logs, advance schedules, and last recalculated month session state.
+
+
+## V116.4 - DOJ Pro-rata + Top Navigation + Salary Summary Labels
+- Salary Summary labels updated: Total Leaves Taken and Leave Deduction Cost on extra leaves.
+- Added Date of Joining to Employee Master.
+- Added first-month pro-rata salary and leave quota calculation.
+- Employees joining after the salary calculation month are omitted from that month.
+- Added To the Top button for quick screen navigation.
+- Added safe Cloud Storage column extension for new non-destructive columns.
+
+## v116.6 — Keep-Awake Playwright + Email Scheduler
+
+- Added `.github/workflows/keep-wagewise-awake-playwright.yml`.
+- Added `scripts/keep_wagewise_awake_playwright.py`.
+- Added `KEEP_AWAKE_PLAYWRIGHT_SETUP_GUIDE.md`.
+- Retained v116.5 daily leave email automation.
+- No payroll/database/business-logic changes in this utility patch.
