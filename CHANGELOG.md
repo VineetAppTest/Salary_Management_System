@@ -1265,3 +1265,35 @@ Fix:
 - The row selector uses the full filtered leave dataset, not an unclear small dropdown.
 - Safe edit/cancel with backup from V101 is retained.
 - No payroll/leave rule changes.
+
+
+# WageWise V103 OIDC User Access Creation Fix
+
+Fix:
+- Users & Access can now create Google/OIDC access records without requiring a real password.
+- Password fields are now optional fallback-password fields.
+- If password is left blank, the user can still login through Google/OIDC if their email matches.
+- The app now clearly warns: never enter Gmail password in WageWise.
+- Fallback/UAT password login still works only if a fallback password is explicitly set.
+
+Why:
+- Google verifies the Gmail password.
+- WageWise should only store email + Admin/Supervisor access permissions.
+
+No salary/payroll/leave/advance logic changes.
+
+
+# WageWise V104 OIDC Minimal Pattern Fix
+
+Built after minimal Google OIDC test succeeded.
+
+Fix:
+- Full WageWise OIDC login now follows the same working minimal pattern.
+- Uses `st.button(..., on_click=st.login)` instead of calling `st.login()` inside an if block.
+- Removed the OIDC refresh button to avoid duplicate session/rerun state issues.
+- Uses safe `st.user.to_dict()` style access.
+- Avoids duplicate OIDC handling in login_screen and main.
+- Keeps fallback/UAT login.
+- OIDC users still map to Users & Access by exact Gmail ID.
+
+No payroll/leave/advance calculation changes.

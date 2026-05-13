@@ -162,8 +162,8 @@ def check_db_table_exists(conn, name):
     exists = conn.execute(text("""
         SELECT EXISTS (
             SELECT 1
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
+            FROM information_setup.tables
+            WHERE table_setup = 'public'
             AND table_name = :table_name
         )
     """), {"table_name": table}).scalar()
@@ -174,8 +174,8 @@ def check_db_table_columns(conn, name):
     existing = [
         row[0] for row in conn.execute(text("""
             SELECT column_name
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
+            FROM information_setup.columns
+            WHERE table_setup = 'public'
             AND table_name = :table_name
         """), {"table_name": table}).fetchall()
     ]
@@ -312,7 +312,7 @@ def get_setup_alignment_report():
             for name, required in REQUIRED_FILES.items():
                 table = db_table_name(name)
                 existing = [r[0] for r in conn.execute(text("""
-                    SELECT column_name FROM information_schema.columns
+                    SELECT column_name FROM information_setup.columns
                     WHERE table_name = :table_name
                 """), {"table_name": table}).fetchall()]
                 missing = [c for c in required if c not in existing]
@@ -2056,44 +2056,38 @@ def verify_user_write(expected_email):
 
 
 
-def authlib_available():
-    """Check whether Authlib is installed before showing OIDC login.
-
-    This prevents StreamlitAuthError from breaking fallback login if Community Cloud
-    has not picked up requirements.txt yet.
-    """
-    try:
-        import authlib  # noqa: F401
-        return True
-    except Exception:
-        return False
-
 def oidc_enabled():
-    """Return True when Streamlit OIDC config is present and Authlib is installed."""
+    """Return True when Streamlit OIDC config is present in secrets."""
     try:
-        has_config = "auth" in st.secrets and "redirect_uri" in st.secrets["auth"]
-        return bool(has_config and authlib_available())
+        if "auth" in st.secrets and "redirect_uri" in st.secrets["auth"]:
+            return True
     except Exception:
-        return False
-
-def oidc_config_present_but_authlib_missing():
-    try:
-        return bool("auth" in st.secrets and "redirect_uri" in st.secrets["auth"] and not authlib_available())
-    except Exception:
-        return False
+        pass
+    return False
 
 def get_oidc_user_dict():
-    """Read verified identity from Streamlit OIDC st.user."""
+    """Read verified identity from Streamlit OIDC st.user using the same safe pattern as the minimal test app."""
     try:
-        if not getattr(st.user, "is_logged_in", False):
-            return None
-        email = getattr(st.user, "email", "") or st.user.get("email", "")
-        name = getattr(st.user, "name", "") or st.user.get("name", "") or email
-        if not email:
-            return None
-        return {"email": str(email).strip().lower(), "name": str(name).strip() or str(email).strip().lower()}
+        is_logged_in = bool(st.user.is_logged_in)
     except Exception:
         return None
+
+    if not is_logged_in:
+        return None
+
+    try:
+        details = st.user.to_dict()
+    except Exception:
+        try:
+            details = dict(st.user)
+        except Exception:
+            details = {}
+
+    email = details.get("email", "")
+    name = details.get("name", "") or email
+    if not email:
+        return None
+    return {"email": str(email).strip().lower(), "name": str(name).strip() or str(email).strip().lower()}
 
 def lookup_user_access_by_email(email, display_name=None, auto_create=False):
     """Use WageWise users table for authorization after OIDC identity verification."""
@@ -2143,19 +2137,19 @@ def lookup_user_access_by_email(email, display_name=None, auto_create=False):
 
 def oidc_login_panel():
     st.markdown("<div class='login-card-title'>Production login</div>", unsafe_allow_html=True)
-    st.caption("Use organisation login. WageWise will then check whether your verified email has Admin or Supervisor access.")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Login with OIDC", use_container_width=True, type="primary", key="oidc_login_button"):
-            st.login()
-    with col2:
-        if st.button("Refresh login status", use_container_width=True, key="oidc_refresh_button"):
-            st.rerun()
+    st.caption("Use Google organisation login. WageWise will then check whether your verified email has Admin or Supervisor access.")
+    st.button("Log in with Google", on_click=st.login, use_container_width=True, type="primary", key="oidc_login_button")
 
 def handle_oidc_authenticated_user():
+    """Authorize a successfully logged-in OIDC user inside WageWise."""
     oidc_user = get_oidc_user_dict()
     if not oidc_user:
         return False
+
+    # If already authorized in this Streamlit session, do not reprocess or rerun.
+    existing = st.session_state.get("auth_user")
+    if existing and str(existing.get("email", "")).strip().lower() == oidc_user["email"]:
+        return True
 
     access_user = lookup_user_access_by_email(oidc_user["email"], display_name=oidc_user.get("name"))
     if not access_user:
@@ -2163,13 +2157,12 @@ def handle_oidc_authenticated_user():
         <div class='login-hero'>
             <div class='login-badge'>WageWise</div>
             <div class='login-main-title'>Access not enabled</div>
-            <div class='login-main-subtitle'>Your organisation login worked, but this email is not enabled inside WageWise.</div>
+            <div class='login-main-subtitle'>Your Google login worked, but this email is not enabled inside WageWise.</div>
         </div>
         """, unsafe_allow_html=True)
         st.error(f"Email not enabled in WageWise Users & Access: {oidc_user['email']}")
-        st.info("Ask an Admin to add this email under Setup & Controls → Users & Access.")
-        if st.button("Logout", use_container_width=True):
-            st.logout()
+        st.info("Ask an Admin to add this exact Gmail ID under Setup & Controls → Users & Access.")
+        st.button("Logout", on_click=st.logout, use_container_width=True)
         return True
 
     st.session_state.auth_user = access_user
@@ -2192,6 +2185,7 @@ def oidc_access_user_password_hash(email):
     while keeping fallback login unusable unless a fallback password is explicitly set.
     """
     return hash_password(f"OIDC_ONLY::{str(email).strip().lower()}::NO_FALLBACK_PASSWORD")
+
 
 def authenticate(email, password):
     users = ensure_user_access_columns(read_table("users"))
@@ -2239,12 +2233,6 @@ def ensure_user_access_columns(users):
 
 
 def login_screen():
-    if oidc_enabled() and handle_oidc_authenticated_user():
-        return
-
-    if oidc_config_present_but_authlib_missing():
-        st.warning("OIDC is configured, but Authlib is not installed in this Streamlit runtime. Fallback login is still available. Fix requirements.txt/redeploy, then OIDC will activate.")
-
     st.markdown("""
     <div class='login-hero'>
         <div class='login-badge'>WageWise</div>
@@ -4152,7 +4140,7 @@ def advance_page():
                 sy, sm = date.today().year, date.today().month
             new_start_month = c3.selectbox("Refund start month", list(range(1, 13)), index=int(sm)-1, format_func=lambda m: calendar.month_name[m])
             new_start_year = c4.number_input("Refund start year", min_value=2020, max_value=2100, value=int(sy), step=1)
-            new_first_deduction = c5.number_input("First month deduction", min_value=0.0, step=50.0, value=safe_float(selected.get("First_Month_Deduction", selected.get("First_Deduction", 0))))
+            new_first_deduction = c5.number_input("First month deduction", min_value=0.0, step=50.0, value=safe_float(selected.get("First_Deduction", 0)))
             new_remaining_months = st.number_input("Remaining months after first deduction", min_value=0, step=1, value=int(safe_float(selected.get("Remaining_Months", 0))))
             new_status = st.selectbox("Status", ["Open", "Closed", "Cancelled"], index=["Open", "Closed", "Cancelled"].index(selected.get("Status", "Open")) if selected.get("Status", "Open") in ["Open", "Closed", "Cancelled"] else 0)
             correction_remark = st.text_area("Mandatory admin correction remark", value="")
@@ -4186,12 +4174,12 @@ def advance_page():
             fresh_cases.loc[mask, "Advance_Date"] = str(new_adv_date)
             fresh_cases.loc[mask, "Amount_Given"] = new_amount
             fresh_cases.loc[mask, "Refund_Start_Month"] = month_label(int(new_start_year), int(new_start_month))
-            fresh_cases.loc[mask, "First_Month_Deduction"] = new_first_deduction
+            fresh_cases.loc[mask, "First_Deduction"] = new_first_deduction
             fresh_cases.loc[mask, "Remaining_Months"] = int(new_remaining_months)
             fresh_cases.loc[mask, "Status"] = new_status
             fresh_cases.loc[mask, "Remarks"] = f"{str(fresh_cases.loc[mask, 'Remarks'].iloc[0])} | ADMIN CORRECTION: {correction_remark}"
             fresh_cases.loc[mask, "Created_By"] = st.session_state.user["email"]
-            fresh_cases.loc[mask, "Timestamp"] = datetime.now().isoformat(timespec="seconds")
+            fresh_cases.loc[mask, "Created_At"] = datetime.now().isoformat(timespec="seconds")
 
             for col in REQUIRED_FILES["advance_schedule"]:
                 if col not in fresh_schedule.columns:
