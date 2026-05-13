@@ -3505,6 +3505,12 @@ def calculate_employee_payroll(emp, year, month, extra_leave_override=None, spec
             emp_leaves["Date_dt"] = parse_app_date_series(emp_leaves["Date"])
             emp_leaves = emp_leaves[(emp_leaves["Date_dt"] >= month_start) & (emp_leaves["Date_dt"] <= month_end)]
 
+    # V116.2 guard: if the employee has no leave rows after filtering,
+    # emp_leaves may be an empty DataFrame without Date_dt. Payroll must
+    # continue instead of crashing on sort_values("Date_dt").
+    if "Date_dt" not in emp_leaves.columns:
+        emp_leaves["Date_dt"] = pd.NaT
+
     impact_cfg = default_special_impact_config()
     if special_config:
         impact_cfg.update(special_config)
@@ -3517,7 +3523,7 @@ def calculate_employee_payroll(emp, year, month, extra_leave_override=None, spec
     paid_balance = paid_leave_allowed
     leave_log_rows = []
 
-    for _, leave in emp_leaves.sort_values("Date_dt").iterrows():
+    for _, leave in emp_leaves.sort_values("Date_dt", na_position="last").iterrows():
         status_value = str(leave.get("Status", "Approved")).strip().lower()
         if status_value in ["rejected", "cancelled", "canceled"]:
             continue
