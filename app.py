@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from io import BytesIO
 from sqlalchemy import create_engine, text
 
@@ -31,6 +32,11 @@ LEAVE_UNITS = {
     "Leave - Uninformed": 1.0,
     "Leave - Collaborative": 1.0,
 }
+
+
+BUILD_VERSION = "V114"
+BUILD_LABEL = "V114 · Auto-Scroll Anchor Hardening"
+NAV_SCROLL_ANCHOR = "ww-selected-content-anchor"
 
 REQUIRED_FILES = {
     "users": ["email", "name", "role", "password_hash", "active", "allow_admin", "allow_supervisor"],
@@ -2247,6 +2253,110 @@ def apply_theme():
         font-weight: 760 !important;
     }}
 
+    
+    /* V113 build marker, spacing and auto-scroll repair */
+    .block-container {{
+        padding-top: 1.15rem !important;
+    }}
+    .sms-title {{
+        margin-top: 4px !important;
+        line-height: 1.1 !important;
+    }}
+    .build-marker {{
+        display: inline-block;
+        vertical-align: middle;
+        margin-left: 10px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: #E6FFF7;
+        color: #0E7367;
+        border: 1px solid #B7E4C7;
+        font-size: 11px;
+        font-weight: 850;
+        letter-spacing: 0.02em;
+    }}
+    .top-nav {{
+        margin-top: 10px !important;
+        margin-bottom: 10px !important;
+    }}
+    .nav-label {{
+        margin-top: 12px !important;
+        margin-bottom: 7px !important;
+        line-height: 1.15 !important;
+    }}
+    .ww-nav-note {{
+        margin: 0 0 12px 0 !important;
+        padding: 9px 12px !important;
+        border-radius: 14px !important;
+    }}
+    .ww-nav-group-title {{
+        margin: 6px 0 10px 0 !important;
+        padding-left: 2px !important;
+        line-height: 1.2 !important;
+    }}
+    div[data-testid="stVerticalBlockBorderWrapper"] {{
+        margin-bottom: 12px !important;
+    }}
+    div[data-testid="stButton"] button {{
+        margin-top: 2px !important;
+        margin-bottom: 6px !important;
+        min-height: 42px !important;
+    }}
+    .ww-content-anchor {{
+        scroll-margin-top: 14px;
+        height: 1px;
+        margin-top: 8px;
+    }}
+    .ww-bottom-guidance-title {{
+        color: #0B4F71;
+        font-weight: 900;
+        font-size: 15px;
+        margin: 12px 0 6px 0;
+    }}
+    @media (max-width: 768px) {{
+        .block-container {{
+            padding-top: 0.75rem !important;
+        }}
+        .sms-title {{
+            font-size: 24px !important;
+            margin-top: 2px !important;
+        }}
+        .build-marker {{
+            font-size: 10px;
+            padding: 2px 7px;
+            margin-left: 6px;
+        }}
+        .top-nav {{
+            margin-top: 8px !important;
+            margin-bottom: 8px !important;
+        }}
+        .nav-label {{
+            margin-top: 10px !important;
+            margin-bottom: 6px !important;
+        }}
+        .ww-nav-note {{
+            font-size: 12px !important;
+            margin-bottom: 10px !important;
+        }}
+        .ww-nav-group-title {{
+            margin: 5px 0 8px 0 !important;
+        }}
+        div[data-testid="stButton"] button {{
+            min-height: 40px !important;
+            margin-bottom: 5px !important;
+        }}
+    }}
+
+    
+    /* V114 auto-scroll anchor hardening */
+    .ww-content-anchor {{
+        scroll-margin-top: 10px;
+        height: 1px;
+        width: 100%;
+        display: block;
+        margin-top: 10px;
+    }}
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -3328,6 +3438,54 @@ def focus_message_for_page(page_name):
 
 
 
+
+def render_selected_content_anchor():
+    """Render a hardcoded stable anchor before selected page content."""
+    st.markdown(
+        '<div id="ww-selected-content-anchor" class="ww-content-anchor" aria-hidden="true"></div>',
+        unsafe_allow_html=True,
+    )
+
+def trigger_auto_scroll_to_content():
+    """Best-effort scroll to selected page content after a navigation button rerun."""
+    if not st.session_state.pop("pending_auto_scroll_to_content", False):
+        return
+
+    components.html(
+        """
+        <script>
+        (function() {
+            const anchorId = "ww-selected-content-anchor";
+
+            function scrollParentToAnchor() {
+                try {
+                    const doc = window.parent.document;
+                    const el = doc.getElementById(anchorId);
+                    if (el) {
+                        const rect = el.getBoundingClientRect();
+                        const currentY = window.parent.pageYOffset || doc.documentElement.scrollTop || doc.body.scrollTop || 0;
+                        const targetY = Math.max(0, currentY + rect.top - 8);
+                        window.parent.scrollTo({ top: targetY, behavior: "smooth" });
+                        return true;
+                    }
+                } catch (e) {}
+
+                try {
+                    window.parent.scrollTo({ top: 360, behavior: "smooth" });
+                } catch (e) {}
+
+                return false;
+            }
+
+            setTimeout(scrollParentToAnchor, 250);
+            setTimeout(scrollParentToAnchor, 750);
+            setTimeout(scrollParentToAnchor, 1300);
+        })();
+        </script>
+        """,
+        height=0,
+    )
+
 def render_nav_group(title, page_names, current_page, key_prefix):
     st.markdown(f"<div class='ww-nav-group-title'>{title}</div>", unsafe_allow_html=True)
     for page_name in page_names:
@@ -3342,6 +3500,7 @@ def render_nav_group(title, page_names, current_page, key_prefix):
             st.session_state.page = page_name
             set_action_focus(focus_message_for_page(page_name), page=page_name)
             st.session_state.scroll_target_note = f"You are now in {page_name}."
+            st.session_state.pending_auto_scroll_to_content = True
             st.rerun()
 
 
@@ -3371,7 +3530,7 @@ def page_navigation():
 
     st.markdown("<div class='nav-label'>Navigation</div>", unsafe_allow_html=True)
     st.markdown(
-        "<div class='ww-nav-note'>Tap a section. The selected section opens directly below this navigation area.</div>",
+        "<div class='ww-nav-note'>Tap a section. WageWise will open and scroll to the selected section.</div>",
         unsafe_allow_html=True,
     )
 
@@ -6045,13 +6204,11 @@ def main():
         role_selection_page()
         return
 
-    st.markdown("<div class='sms-title'>WageWise</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sms-title'>WageWise <span class='build-marker'>Build V114</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='sms-subtitle'>Leave, advances and payroll in one guided flow</div>", unsafe_allow_html=True)
     show_confirmation_area()
     page = page_navigation()
-    if st.session_state.get("scroll_target_note"):
-        st.markdown(f"<div class='ww-nav-selected-note'>{st.session_state.pop('scroll_target_note')}</div>", unsafe_allow_html=True)
-    show_action_focus()
+    render_selected_content_anchor()
     if page == "Dashboard":
         dashboard_page()
     elif page == "Payroll Control Centre":
@@ -6080,6 +6237,15 @@ def main():
         employees_page()
     elif page == "Logs":
         logs_page()
+
+    trigger_auto_scroll_to_content()
+
+    if st.session_state.get("scroll_target_note") or st.session_state.get("action_focus_message"):
+        st.divider()
+        st.markdown("<div class='ww-bottom-guidance-title'>Section update</div>", unsafe_allow_html=True)
+        if st.session_state.get("scroll_target_note"):
+            st.markdown(f"<div class='ww-nav-selected-note'>{st.session_state.pop('scroll_target_note')}</div>", unsafe_allow_html=True)
+        show_action_focus()
 
 if __name__ == "__main__":
     main()

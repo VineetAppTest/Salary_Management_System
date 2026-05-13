@@ -1332,3 +1332,63 @@ Retained:
 - Safe edit/cancel flows.
 
 No payroll, leave, or advance calculation rule changes.
+
+
+# WageWise V113 Build Marker + Spacing + Auto-Scroll Repair
+
+Built on V112.
+
+Changes:
+1. Added visible build marker:
+   - Build V113 appears next to WageWise title.
+
+2. Spacing fixes:
+   - More top padding between page top and heading.
+   - Better spacing between Navigation note and group sections.
+   - Better spacing between group headings and buttons.
+
+3. Auto-scroll repair:
+   - Navigation button clicks set a pending scroll flag.
+   - After rerun, app renders a stable content anchor and triggers a best-effort scroll to selected content.
+   - Multiple timed attempts are used to improve reliability in Streamlit.
+
+4. Guidance moved:
+   - "You are now in..." and action-focus messages are moved to the bottom under "Section update".
+
+Retained:
+- Button-grid navigation.
+- No dropdown navigation.
+- No collapsed full-navigation dependency.
+- No top-right toast.
+- True page routing.
+- Recovery and unsafe write protections.
+- OIDC login pattern.
+
+No payroll, leave, or advance calculation rule changes.
+
+
+# WageWise V114 Auto-Scroll Anchor Hardening
+
+Built on V113.
+
+Fix:
+- Hardcoded stable anchor:
+  <div id="ww-selected-content-anchor"></div>
+- Auto-scroll looks for the exact hardcoded anchor.
+- Scroll trigger now runs after the selected content routing block starts.
+- Scroll retries at 250ms, 750ms and 1300ms.
+- Fallback scroll remains if browser cannot find the anchor.
+- Build marker updated to Build V114.
+
+Retained:
+- V113 build marker/spacing improvements.
+- Button-grid navigation.
+- No dropdown navigation.
+- No collapsed full-navigation dependency.
+- Bottom guidance section.
+- No top-right toast.
+- True page routing.
+- Recovery and unsafe-write protections.
+- OIDC login pattern.
+
+No payroll, leave, or advance calculation rule changes.
