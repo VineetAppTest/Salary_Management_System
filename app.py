@@ -34,7 +34,7 @@ LEAVE_UNITS = {
 }
 
 
-BUILD_VERSION = "V115.2"
+BUILD_VERSION = "V115.3"
 BUILD_LABEL = "V115.1 · Client Redirect Visibility Fix"
 NAV_SCROLL_ANCHOR = "ww-section-content-anchor"
 
@@ -2350,14 +2350,14 @@ def apply_theme():
     
     /* V114 auto-scroll anchor hardening */
     .ww-content-anchor {{
-        scroll-margin-top: 10px;
+        scroll-margin-top: 18px;
         height: 1px;
         width: 100%;
         display: block;
-        margin-top: 10px;
+        margin-top: 4px;
     }}
 
-    /* V115 section-first redirect layout: remove auto-scroll dependency and fix overlap */
+    /* V115.3 accordion + stable delayed auto-scroll: keep fallback visible, enhance navigation smoothness */
     .block-container {{
         padding-top: 1.0rem !important;
         padding-left: 1.05rem !important;
@@ -2373,17 +2373,23 @@ def apply_theme():
         box-shadow: 0 14px 34px rgba(6, 63, 50, 0.20);
         clear: both;
         position: relative;
-        z-index: 2;
+        z-index: 5;
         overflow: hidden;
+        display: block !important;
+        width: 100% !important;
+        min-height: 116px;
     }}
     .ww-primary-heading {{
         font-size: clamp(1.95rem, 4.6vw, 2.85rem);
         font-weight: 950;
         letter-spacing: -0.035em;
-        line-height: 1.02;
-        margin: 0 0 5px 0;
+        line-height: 1.08;
+        margin: 0 0 6px 0;
         color: #FFFFFF !important;
         overflow-wrap: anywhere;
+        text-shadow: 0 2px 10px rgba(0,0,0,.18);
+        display: block !important;
+        visibility: visible !important;
     }}
     .ww-secondary-heading {{
         font-size: clamp(1.05rem, 2.4vw, 1.32rem);
@@ -3670,16 +3676,64 @@ def focus_message_for_page(page_name):
 
 
 def render_selected_content_anchor():
-    """V115 keeps a harmless content marker only for visual separation; no browser auto-scroll is used."""
+    """Stable anchor placed immediately before the selected section content."""
+    page_name = st.session_state.get("page", "selected section")
     st.markdown(
-        '<div id="ww-section-content-anchor" class="ww-content-anchor" aria-hidden="true"></div>',
+        f'<div id="ww-section-content-anchor" class="ww-content-anchor" aria-label="Loaded section: {page_name}"></div>',
         unsafe_allow_html=True,
     )
 
 def trigger_auto_scroll_to_content():
-    """Disabled in v115. Section-first rerun navigation is more reliable than browser auto-scroll."""
+    """V115.3: delayed, retry-based auto-scroll after Streamlit rerun.
+
+    The accordion layout remains the safe fallback. This JS only improves smoothness
+    where the browser allows parent-frame scrolling.
+    """
+    if not st.session_state.get("pending_auto_scroll_to_content"):
+        return
+
     st.session_state.pop("pending_auto_scroll_to_content", None)
-    return
+    target_label = str(st.session_state.get("page", "selected section")).replace("'", "")
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            const targetId = "ww-section-content-anchor";
+            const label = "{target_label}";
+            let attempts = 0;
+            const maxAttempts = 16;
+
+            function findTarget() {{
+                try {{
+                    return window.parent.document.getElementById(targetId);
+                }} catch (e) {{
+                    return document.getElementById(targetId);
+                }}
+            }}
+
+            function stableScroll() {{
+                attempts += 1;
+                const target = findTarget();
+                if (target) {{
+                    try {{
+                        target.scrollIntoView({{ behavior: "smooth", block: "start", inline: "nearest" }});
+                    }} catch (e) {{
+                        target.scrollIntoView(true);
+                    }}
+                    return;
+                }}
+                if (attempts < maxAttempts) {{
+                    setTimeout(stableScroll, 120);
+                }}
+            }}
+
+            setTimeout(stableScroll, 180);
+        }})();
+        </script>
+        """,
+        height=0,
+        scrolling=False,
+    )
 
 
 def page_heading_text(page_name):
@@ -3760,9 +3814,10 @@ def render_nav_group(title, page_names, current_page, key_prefix):
         ):
             st.session_state.page = page_name
             st.session_state.nav_compact_after_selection = True
-            set_confirmation(f"Opened {page_name}. The section chooser is collapsed and the selected section is visible below.", celebrate=False)
+            set_confirmation(f"Opened {page_name}. WageWise is moving you to the selected section; if the browser blocks auto-scroll, the accordion fallback keeps the section visible below.", celebrate=False)
             set_action_focus(focus_message_for_page(page_name), page=page_name)
             st.session_state.scroll_target_note = f"You are now in {page_name}."
+            st.session_state.pending_auto_scroll_to_content = True
             st.rerun()
 
 
@@ -3818,11 +3873,11 @@ def page_navigation():
         unsafe_allow_html=True,
     )
 
-    # V115.2: accordion-first navigation. The section chooser stays collapsed by default,
-    # so the selected section content is visible immediately without scrolling or JS auto-scroll.
+    # V115.3: accordion-first navigation remains the fallback.
+    # Delayed JS auto-scroll is attempted after rerun, but content is still reachable if JS fails.
     with st.expander("Open / change section", expanded=False):
         st.markdown(
-            "<div class='ww-nav-note'>Select a section below. The chooser will collapse again and the selected section will open immediately on the page.</div>",
+            "<div class='ww-nav-note'>Select a section below. WageWise will open it and attempt a stable auto-scroll after the page refreshes.</div>",
             unsafe_allow_html=True,
         )
         _render_full_navigation("accordion")
