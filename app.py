@@ -2166,6 +2166,87 @@ def apply_theme():
         color: #163B5C !important;
     }}
 
+    
+    /* V111 button-grid navigation fix */
+    .ww-nav-note {{
+        background: #F8FBFD;
+        border: 1px solid #DDEAF2;
+        border-radius: 14px;
+        padding: 8px 11px;
+        color: #2D4A5F;
+        font-size: 13px;
+        font-weight: 650;
+        margin: 4px 0 8px 0;
+    }}
+    .ww-nav-group-title {{
+        font-size: 14px !important;
+        font-weight: 900 !important;
+        color: #0B4F71 !important;
+        margin: 2px 0 6px 0 !important;
+    }}
+    div[data-testid="stButton"] button[kind="primary"] {{
+        background: #0B4F71 !important;
+        color: #FFFFFF !important;
+        border: 1px solid #0B4F71 !important;
+        font-weight: 900 !important;
+    }}
+    div[data-testid="stButton"] button[kind="primary"] p {{
+        color: #FFFFFF !important;
+        font-weight: 900 !important;
+    }}
+    div[data-testid="stButton"] button[kind="secondary"] {{
+        color: #163B5C !important;
+        background: #FFFFFF !important;
+        border: 1px solid #D7E6EF !important;
+        font-weight: 760 !important;
+    }}
+    div[data-testid="stButton"] button[kind="secondary"] p {{
+        color: #163B5C !important;
+        font-weight: 760 !important;
+    }}
+    @media (max-width: 768px) {{
+        .ww-nav-note {{
+            font-size: 12px !important;
+            padding: 7px 9px !important;
+            margin-bottom: 6px !important;
+        }}
+        .ww-nav-group-title {{
+            font-size: 13px !important;
+            margin-top: 0 !important;
+        }}
+        div[data-testid="stButton"] button {{
+            min-height: 39px !important;
+            padding: 6px 8px !important;
+        }}
+    }}
+
+    
+    /* V112 verified button-grid navigation */
+    .ww-nav-note {{
+        background: #F8FBFD;
+        border: 1px solid #DDEAF2;
+        border-radius: 14px;
+        padding: 8px 11px;
+        color: #2D4A5F;
+        font-size: 13px;
+        font-weight: 650;
+        margin: 4px 0 8px 0;
+    }}
+    .ww-nav-group-title {{
+        font-size: 14px !important;
+        font-weight: 900 !important;
+        color: #0B4F71 !important;
+        margin: 2px 0 6px 0 !important;
+    }}
+    div[data-testid="stButton"] button[kind="primary"] p {{
+        color: #FFFFFF !important;
+        font-weight: 900 !important;
+    }}
+    div[data-testid="stButton"] button[kind="secondary"] p {{
+        color: #163B5C !important;
+        font-weight: 760 !important;
+    }}
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -3251,11 +3332,16 @@ def render_nav_group(title, page_names, current_page, key_prefix):
     st.markdown(f"<div class='ww-nav-group-title'>{title}</div>", unsafe_allow_html=True)
     for page_name in page_names:
         is_active = current_page == page_name
-        label = f"➤ {page_name}" if is_active else page_name
-        if st.button(label, use_container_width=True, key=f"{key_prefix}_{title}_{page_name}", type="primary" if is_active else "secondary"):
+        label = f"✓ {page_name}" if is_active else page_name
+        if st.button(
+            label,
+            use_container_width=True,
+            key=f"{key_prefix}_{title}_{page_name}",
+            type="primary" if is_active else "secondary",
+        ):
             st.session_state.page = page_name
             set_action_focus(focus_message_for_page(page_name), page=page_name)
-            st.session_state.scroll_target_note = f"You are now in {page_name}. Continue below."
+            st.session_state.scroll_target_note = f"You are now in {page_name}."
             st.rerun()
 
 
@@ -3273,56 +3359,37 @@ def page_navigation():
         nav_groups = {"Supervisor": ["Dashboard"]}
     else:
         nav_groups = {
-            "Workflows": ["Dashboard", "Payroll Control Centre", "Leave", "Holiday", "Advance", "Employee Profile"],
-            "Payroll & Reports": ["Payroll Calculation", "Salary Summary", "Payroll Approval", "Logs"],
-            "Setup & Recovery": ["Employees", "Users & Access", "Advance Master", "Bulk Leave Upload", "Recovery"],
-            "Technical": ["Technical Checks", "System Health", "Demo Mode Guide"],
+            "Daily Work": ["Dashboard", "Leave", "Holiday", "Advance", "Employee Profile"],
+            "Payroll Flow": ["Payroll Control Centre", "Payroll Calculation", "Salary Summary", "Payroll Approval"],
+            "Setup": ["Employees", "Users & Access", "Advance Master", "Bulk Leave Upload"],
+            "Recovery & Technical": ["Recovery", "Technical Checks", "System Health", "Demo Mode Guide", "Logs"],
         }
 
     pages = [p for group in nav_groups.values() for p in group]
     if "page" not in st.session_state or st.session_state.page not in pages:
         st.session_state.page = pages[0]
 
-    st.markdown("<div class='nav-label'>Section</div>", unsafe_allow_html=True)
-
-    current_index = pages.index(st.session_state.page) if st.session_state.page in pages else 0
-    selected_page = st.selectbox(
-        "Go to section",
-        pages,
-        index=current_index,
-        key="compact_section_selector",
-        label_visibility="collapsed",
+    st.markdown("<div class='nav-label'>Navigation</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='ww-nav-note'>Tap a section. The selected section opens directly below this navigation area.</div>",
+        unsafe_allow_html=True,
     )
-    if selected_page != st.session_state.page:
-        st.session_state.page = selected_page
-        set_action_focus(focus_message_for_page(selected_page), page=selected_page)
-        st.session_state.scroll_target_note = f"You are now in {selected_page}."
-        st.rerun()
 
-    with st.expander("Open full navigation", expanded=False):
-        if user["role"] == "Supervisor":
+    if user["role"] == "Supervisor":
+        with st.container(border=True):
             render_nav_group("Supervisor", nav_groups["Supervisor"], st.session_state.page, "nav_supervisor")
-        else:
-            left_col, right_col = st.columns([1.0, 1.0], gap="large")
-            with left_col:
-                with st.container(border=True):
-                    render_nav_group("Workflows", nav_groups["Workflows"], st.session_state.page, "nav")
-                with st.container(border=True):
-                    render_nav_group("Payroll & Reports", nav_groups["Payroll & Reports"], st.session_state.page, "nav")
-            with right_col:
-                with st.container(border=True):
-                    render_nav_group("Setup & Recovery", nav_groups["Setup & Recovery"], st.session_state.page, "nav")
-                with st.container(border=True):
-                    render_nav_group("Technical", nav_groups["Technical"], st.session_state.page, "nav")
-                st.markdown(
-                    """
-                    <div class='ww-helper-card'>
-                        <div class='ww-helper-title'>Recommended flow</div>
-                        <div class='ww-helper-text'>Payroll Control Centre → Payroll Calculation → Salary Summary → Payroll Approval.</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+    else:
+        left_col, right_col = st.columns([1.0, 1.0], gap="medium")
+        with left_col:
+            with st.container(border=True):
+                render_nav_group("Daily Work", nav_groups["Daily Work"], st.session_state.page, "nav")
+            with st.container(border=True):
+                render_nav_group("Payroll Flow", nav_groups["Payroll Flow"], st.session_state.page, "nav")
+        with right_col:
+            with st.container(border=True):
+                render_nav_group("Setup", nav_groups["Setup"], st.session_state.page, "nav")
+            with st.container(border=True):
+                render_nav_group("Recovery & Technical", nav_groups["Recovery & Technical"], st.session_state.page, "nav")
 
     allowed_roles_for_login = user_allowed_roles(auth_user)
     show_switch_role = len(allowed_roles_for_login) > 1

@@ -1446,3 +1446,51 @@ Retained:
 - Safe edit/cancel flows for advances and leaves.
 
 No payroll, leave, or advance calculation rule changes.
+
+
+# WageWise V111 Button Grid Navigation Fix
+
+Built after V110 feedback.
+
+Correction:
+- Removed dropdown navigation.
+- Removed collapsed full-navigation dependency.
+- Navigation is now a visible button grid:
+  - Daily Work
+  - Payroll Flow
+  - Setup
+  - Recovery & Technical
+- The selected section opens immediately below navigation.
+- Active button is clearly highlighted.
+- Works better for desktop and phone than a dropdown.
+
+Retained:
+- True page routing for Users & Access / Advance Master / Recovery / Technical Checks.
+- No top-right toast.
+- Data safety and Section Rollback.
+- OIDC minimal working login pattern.
+- Safe edit/cancel flows.
+
+No payroll, leave, or advance calculation rule changes.
+
+
+# WageWise V112 Navigation Cleanup Verified
+
+This build corrects the V111 issue where dropdown/full-navigation remnants could still exist.
+
+Verified correction:
+- No dropdown navigation in page_navigation.
+- No `compact_section_selector`.
+- No `Go to section` selectbox.
+- No `Open full navigation` expander.
+- Navigation is a visible button grid only.
+- Selected section opens directly below the button-grid navigation.
+
+Retained:
+- True page routing for Users & Access / Advance Master / Recovery / Technical Checks.
+- No top-right toast.
+- Data safety and Section Rollback.
+- OIDC minimal working login pattern.
+- Safe edit/cancel flows.
+
+No payroll, leave, or advance calculation rule changes.
