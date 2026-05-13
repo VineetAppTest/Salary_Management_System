@@ -51,8 +51,8 @@ def is_contractor_level(level):
     return normalize_employee_level(level) == "L0"
 
 
-BUILD_VERSION = "V116"
-BUILD_LABEL = "V116 · Final Client Ship Ready + Advance Safety"
+BUILD_VERSION = "V116.1"
+BUILD_LABEL = "V116.1 · Backend Actions Applied + Final Client Ship Ready"
 NAV_SCROLL_ANCHOR = "ww-section-content-anchor"
 
 REQUIRED_FILES = {
@@ -3171,6 +3171,146 @@ def date_to_month_label(dt):
     """Convert a date_input value to Apr-2026 style month label."""
     return month_label(int(dt.year), int(dt.month))
 
+
+
+
+def apply_v116_1_backend_requested_actions():
+    """Idempotent backend correction requested before final shipment.
+
+    Actions:
+    1) Rebuild missing advance master records from advance schedule rows for Apr-2026 onwards.
+    2) Mark employee-specific holiday exclusions for E_Vivek from 2026-05-01 to 2026-05-12.
+
+    This is intentionally conservative: it only creates missing rows and does not delete/replace
+    existing advance or holiday data.
+    """
+    session_key = "v116_1_backend_actions_applied"
+    if st.session_state.get(session_key):
+        return
+
+    now_ts = datetime.now().isoformat(timespec="seconds")
+    actor = "backend@wagewise.local"
+    changed_advance_cases = 0
+    changed_holidays = 0
+
+    try:
+        schedule = normalize_required_columns("advance_schedule", read_table("advance_schedule"))
+        cases = normalize_required_columns("advance_cases", read_table("advance_cases"))
+
+        if cases.empty:
+            cases = pd.DataFrame(columns=REQUIRED_FILES["advance_cases"])
+        if schedule.empty:
+            schedule = pd.DataFrame(columns=REQUIRED_FILES["advance_schedule"])
+
+        existing_adv_ids = set(cases.get("Advance_ID", pd.Series(dtype=str)).astype(str).tolist()) if "Advance_ID" in cases.columns else set()
+        schedule_rows = []
+        cutoff = date(2026, 4, 1)
+
+        if not schedule.empty and "Advance_ID" in schedule.columns:
+            for row in schedule.to_dict("records"):
+                adv_id = str(row.get("Advance_ID", "")).strip()
+                emp_id = str(row.get("Emp_ID", "")).strip()
+                deduction_month = str(row.get("Deduction_Month", "")).strip()
+                if not adv_id or not emp_id or not deduction_month:
+                    continue
+                deduction_date = month_label_to_date(deduction_month)
+                if deduction_date < cutoff:
+                    continue
+                schedule_rows.append({**row, "_deduction_date": deduction_date})
+
+        by_advance = {}
+        for row in schedule_rows:
+            by_advance.setdefault(str(row.get("Advance_ID", "")).strip(), []).append(row)
+
+        for adv_id, rows in by_advance.items():
+            if not adv_id or adv_id in existing_adv_ids:
+                continue
+            rows = sorted(rows, key=lambda r: r["_deduction_date"])
+            emp_id = str(rows[0].get("Emp_ID", "")).strip()
+            if not emp_id:
+                continue
+            total_amount = 0.0
+            first_deduction = 0.0
+            first_month = str(rows[0].get("Deduction_Month", "")).strip()
+            first_date = rows[0]["_deduction_date"]
+            distinct_months = []
+            for r in rows:
+                deduction_value = safe_float(r.get("Final_Deduction", 0))
+                if deduction_value == 0:
+                    deduction_value = safe_float(r.get("Admin_Updated_Deduction", 0))
+                if deduction_value == 0:
+                    deduction_value = safe_float(r.get("Scheduled_Deduction", 0))
+                total_amount += deduction_value
+                if str(r.get("Deduction_Month", "")).strip() == first_month:
+                    first_deduction += deduction_value
+                month_text = str(r.get("Deduction_Month", "")).strip()
+                if month_text and month_text not in distinct_months:
+                    distinct_months.append(month_text)
+
+            if total_amount <= 0:
+                continue
+
+            cases.loc[len(cases)] = [
+                adv_id,
+                emp_id,
+                str(first_date),
+                round(total_amount, 2),
+                first_month,
+                round(first_deduction, 2),
+                max(len(distinct_months) - 1, 0),
+                "Open",
+                "V116.1 backend reconciliation: advance case created from advance schedule.",
+                actor,
+                now_ts,
+            ]
+            existing_adv_ids.add(adv_id)
+            changed_advance_cases += 1
+
+        if changed_advance_cases:
+            write_table("advance_cases", cases)
+
+        holidays = normalize_required_columns("employee_holidays", read_table("employee_holidays"))
+        if holidays.empty:
+            holidays = pd.DataFrame(columns=REQUIRED_FILES["employee_holidays"])
+
+        holiday_emp = "E_Vivek"
+        holiday_remark = "started on 13th May"
+        holiday_name = "Employee-specific holiday"
+        for day in range(1, 13):
+            holiday_date = date(2026, 5, day).isoformat()
+            duplicate = False
+            if not holidays.empty and {"Date", "Emp_ID"}.issubset(holidays.columns):
+                duplicate = (
+                    (holidays["Date"].astype(str) == holiday_date)
+                    & (holidays["Emp_ID"].astype(str) == holiday_emp)
+                ).any()
+            if duplicate:
+                continue
+            holidays.loc[len(holidays)] = [
+                f"HOL-E-VIVEK-202605{day:02d}",
+                holiday_date,
+                holiday_emp,
+                holiday_name,
+                holiday_remark,
+                actor,
+                now_ts,
+            ]
+            changed_holidays += 1
+
+        if changed_holidays:
+            write_table("employee_holidays", holidays)
+
+        if changed_advance_cases or changed_holidays:
+            add_audit(
+                actor,
+                "V116_1_BACKEND_ACTIONS",
+                f"Created {changed_advance_cases} missing advance case(s) from schedules; added {changed_holidays} E_Vivek holiday exclusion row(s).",
+            )
+
+        st.session_state[session_key] = True
+    except Exception as e:
+        st.session_state[session_key] = True
+        st.session_state["v116_1_backend_actions_warning"] = str(e)
 
 def add_months(year, month, n):
     month_index = (year * 12 + (month - 1)) + n
@@ -6719,6 +6859,8 @@ def main():
     if not st.session_state.get("user"):
         role_selection_page()
         return
+
+    apply_v116_1_backend_requested_actions()
 
     render_wagewise_header()
     show_confirmation_area()
