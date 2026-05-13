@@ -1226,3 +1226,61 @@ Important:
 - If a browser blocks the script, the inline “You are now in…” guidance remains as fallback.
 
 No payroll/leave/advance calculation changes.
+
+
+# WageWise V109 Go-Live Navigation & Safety Correction
+
+Built on V108, retaining V107 recovery/stability.
+
+Corrections:
+1. Removed top-right toast notification for action focus.
+2. Converted Setup areas from fragile tabs into true pages:
+   - Users & Access
+   - Advance Master
+   - Recovery
+   - Technical Checks
+   - Demo Mode Guide
+3. Rebalanced navigation:
+   - Workflows
+   - Payroll & Reports
+   - Setup & Recovery
+   - Technical
+4. Active navigation button contrast improved.
+5. Removed reliance on auto-scroll as the primary fix; selected section is now routed as actual page content.
+6. Users & Access create/update/repair keeps user in Users & Access.
+7. Critical table write safety strengthened:
+   - unsafe empty write guard retained
+   - pre-write backup retained
+   - post-write row-count verification added
+
+Retained:
+- V108/V107 rollback and guarded write foundations
+- V106 mobile login compact fix
+- V105 login polish
+- V104 working OIDC minimal pattern
+- V103 OIDC user creation without Gmail password
+- V102 leave correction full list selector
+- V101 leave safe edit/cancel
+- V100 advance safe edit/recovery guard
+
+No payroll, leave, or advance calculation rule changes.
+
+
+# WageWise V110 Go-Live Compact Navigation + True Routing
+
+Revised build after V109 review.
+
+Major correction:
+- Navigation is now compact selector-first.
+- Selected section content appears immediately below the selector.
+- Full grouped navigation is optional and collapsed under "Open full navigation".
+- This avoids the manual-scroll problem instead of relying on fragile auto-scroll scripts.
+
+Retained:
+- True page routing for Users & Access / Advance Master / Recovery / Technical Checks.
+- No top-right toast.
+- Data safety and Section Rollback.
+- OIDC minimal working pattern.
+- Safe edit/cancel flows for advances and leaves.
+
+No payroll, leave, or advance calculation rule changes.

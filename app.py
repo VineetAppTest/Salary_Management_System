@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 from io import BytesIO
 from sqlalchemy import create_engine, text
 
@@ -263,6 +262,7 @@ def write_table_db(name, df, allow_empty_restore=False):
             if existing_count > 0 and df.empty and not allow_empty_restore:
                 raise ValueError(f"Blocked unsafe empty write for {name}. Existing rows: {existing_count}. Use Section Rollback or explicit recovery if clearing is intended.")
 
+        expected_count = len(df)
         with engine.begin() as conn:
             try:
                 conn.execute(text("SET LOCAL statement_timeout = '60000'"))
@@ -271,6 +271,11 @@ def write_table_db(name, df, allow_empty_restore=False):
             conn.execute(text(f'DELETE FROM "{table}"'))
         if not df.empty:
             df.astype(str).to_sql(table, engine, if_exists="append", index=False, method="multi", chunksize=100)
+        if name in critical_tables:
+            with engine.connect() as conn:
+                after_count = int(conn.execute(text(f'SELECT COUNT(*) FROM "{table}"')).scalar() or 0)
+            if after_count != expected_count:
+                raise ValueError(f"Write verification failed for {name}. Expected {expected_count} rows, found {after_count}.")
         st.session_state[db_table_cache_key(name)] = df.copy()
     except Exception as e:
         st.session_state["last_db_runtime_issue"] = f"Could not write {name} to Cloud Storage. Local fallback used. Details: {e}"
@@ -2103,6 +2108,64 @@ def apply_theme():
         position: relative;
     }}
 
+    
+    /* V109 navigation safety correction */
+    .ww-nav-selected-note {{
+        background: #E9F7EF !important;
+        border: 1px solid #B7E4C7 !important;
+        color: #103B2A !important;
+    }}
+    div[data-testid="stButton"] button[kind="primary"] {{
+        background: #0B4F71 !important;
+        color: #FFFFFF !important;
+        border: 1px solid #0B4F71 !important;
+        font-weight: 850 !important;
+    }}
+    div[data-testid="stButton"] button[kind="primary"] p {{
+        color: #FFFFFF !important;
+    }}
+    div[data-testid="stButton"] button[kind="secondary"] {{
+        color: #163B5C !important;
+        background: #FFFFFF !important;
+        border: 1px solid #D7E6EF !important;
+        font-weight: 750 !important;
+    }}
+    div[data-testid="stButton"] button[kind="secondary"] p {{
+        color: #163B5C !important;
+    }}
+    @media (max-width: 768px) {{
+        .ww-helper-card {{
+            margin-top: 8px !important;
+        }}
+    }}
+
+    
+    /* V110 compact navigation */
+    .nav-label {{
+        margin-top: 6px !important;
+        margin-bottom: 4px !important;
+    }}
+    div[data-testid="stSelectbox"] {{
+        margin-bottom: 6px !important;
+    }}
+    div[data-testid="stExpander"] details {{
+        border-radius: 14px !important;
+    }}
+    .ww-nav-selected-note {{
+        background: #E9F7EF !important;
+        border: 1px solid #B7E4C7 !important;
+        color: #103B2A !important;
+        border-radius: 14px !important;
+        padding: 9px 12px !important;
+        margin: 6px 0 10px 0 !important;
+    }}
+    div[data-testid="stButton"] button[kind="primary"] p {{
+        color: #FFFFFF !important;
+    }}
+    div[data-testid="stButton"] button[kind="secondary"] p {{
+        color: #163B5C !important;
+    }}
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -3145,10 +3208,6 @@ def show_action_focus(default_message=None):
             """,
             unsafe_allow_html=True,
         )
-        try:
-            st.toast(msg, icon="✅")
-        except Exception:
-            pass
     elif default_message:
         st.markdown(
             f"""
@@ -3171,45 +3230,21 @@ def focus_message_for_page(page_name):
         "Payroll Calculation": "Payroll Calculation opened. Select month and generate/recalculate payroll.",
         "Payroll Approval": "Payroll Approval opened. Use only after Salary Summary is reviewed.",
         "Employees": "Employees page opened. Add/edit active employees and supervisor mapping.",
+        "Advance Master": "Advance Master opened. Review and safely reconcile backend-created advances.",
+        "Advance Master": "Advance Master opened. Review and safely reconcile backend-created advances.",
         "Users & Access": "Users & Access opened. Create users, edit access, or repair user storage columns.",
+        "Recovery": "Recovery opened. Roll back a selected section from saved backups.",
+        "Technical Checks": "Technical Checks opened. Review storage and readiness only when needed.",
+        "Demo Mode Guide": "Demo Mode Guide opened. Review demo/client mode behaviour.",
+        "Recovery": "Recovery opened. Roll back a selected section from saved backups.",
+        "Technical Checks": "Technical Checks opened. Review storage and readiness only when needed.",
+        "Demo Mode Guide": "Demo Mode Guide opened. Review demo/client mode behaviour.",
         "Bulk Leave Upload": "Bulk Leave Upload opened. Upload the leave file, validate, then confirm bulk upload.",
         "System Health": "System Health opened. Review system status and storage health only when needed.",
         "Logs": "Logs opened. Review audit entries and activity history.",
     }
     return mapping.get(page_name, f"{page_name} opened. Continue with the highlighted section below.")
 
-
-
-def auto_jump_to_selected_section():
-    """Best-effort browser jump to selected page content after navigation.
-
-    Streamlit reruns the page after a button click. This helper places a target anchor
-    and asks the browser to scroll close to it. It is intentionally best-effort because
-    browser/Streamlit iframe behaviour can vary.
-    """
-    st.markdown("<div id='ww-selected-section-anchor'></div>", unsafe_allow_html=True)
-    if st.session_state.pop("auto_jump_to_selected_section", False):
-        components.html(
-            """
-            <script>
-            setTimeout(function() {
-                try {
-                    const parentDoc = window.parent.document;
-                    const el = parentDoc.getElementById('ww-selected-section-anchor');
-                    if (el) {
-                        const y = el.getBoundingClientRect().top + window.parent.pageYOffset - 12;
-                        window.parent.scrollTo({top: y, behavior: 'smooth'});
-                    }
-                } catch (e) {
-                    try {
-                        window.parent.scrollTo({top: 420, behavior: 'smooth'});
-                    } catch (err) {}
-                }
-            }, 350);
-            </script>
-            """,
-            height=0,
-        )
 
 
 def render_nav_group(title, page_names, current_page, key_prefix):
@@ -3221,7 +3256,6 @@ def render_nav_group(title, page_names, current_page, key_prefix):
             st.session_state.page = page_name
             set_action_focus(focus_message_for_page(page_name), page=page_name)
             st.session_state.scroll_target_note = f"You are now in {page_name}. Continue below."
-            st.session_state.auto_jump_to_selected_section = True
             st.rerun()
 
 
@@ -3232,52 +3266,63 @@ def page_navigation():
     display_name = auth_user.get("name", user.get("name", "User"))
     st.markdown(
         f"<div class='top-nav'><b>Logged in:</b> {display_name} &nbsp;&nbsp; | &nbsp;&nbsp; <b>Current Role:</b> {user['role']}{demo_badge}</div>",
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
     if user["role"] == "Supervisor":
-        pages = ["Dashboard"]
-        nav_groups = {"Supervisor": pages}
+        nav_groups = {"Supervisor": ["Dashboard"]}
     else:
         nav_groups = {
-            "Overview": ["Dashboard", "Payroll Control Centre", "Salary Summary"],
-            "Monthly Inputs": ["Leave", "Holiday", "Advance", "Employee Profile"],
-            "Payroll Processing": ["Payroll Calculation", "Payroll Approval"],
-            "Setup & Controls": ["Employees", "Users & Access", "Bulk Leave Upload", "System Health", "Logs"],
+            "Workflows": ["Dashboard", "Payroll Control Centre", "Leave", "Holiday", "Advance", "Employee Profile"],
+            "Payroll & Reports": ["Payroll Calculation", "Salary Summary", "Payroll Approval", "Logs"],
+            "Setup & Recovery": ["Employees", "Users & Access", "Advance Master", "Bulk Leave Upload", "Recovery"],
+            "Technical": ["Technical Checks", "System Health", "Demo Mode Guide"],
         }
-        pages = [p for group in nav_groups.values() for p in group]
 
+    pages = [p for group in nav_groups.values() for p in group]
     if "page" not in st.session_state or st.session_state.page not in pages:
         st.session_state.page = pages[0]
 
-    st.markdown("<div class='nav-label'>Navigation</div>", unsafe_allow_html=True)
+    st.markdown("<div class='nav-label'>Section</div>", unsafe_allow_html=True)
 
-    if user["role"] == "Supervisor":
-        st.caption("Simple mobile-friendly supervisor flow.")
-        with st.container(border=True):
-            render_nav_group("Supervisor", ["Dashboard"], st.session_state.page, "nav_supervisor")
-    else:
-        left_col, right_col = st.columns([1.0, 1.0], gap="large")
-        with left_col:
-            with st.container(border=True):
-                render_nav_group("Overview", nav_groups["Overview"], st.session_state.page, "nav")
-            with st.container(border=True):
-                render_nav_group("Monthly Inputs", nav_groups["Monthly Inputs"], st.session_state.page, "nav")
-            with st.container(border=True):
-                render_nav_group("Payroll Processing", nav_groups["Payroll Processing"], st.session_state.page, "nav")
+    current_index = pages.index(st.session_state.page) if st.session_state.page in pages else 0
+    selected_page = st.selectbox(
+        "Go to section",
+        pages,
+        index=current_index,
+        key="compact_section_selector",
+        label_visibility="collapsed",
+    )
+    if selected_page != st.session_state.page:
+        st.session_state.page = selected_page
+        set_action_focus(focus_message_for_page(selected_page), page=selected_page)
+        st.session_state.scroll_target_note = f"You are now in {selected_page}."
+        st.rerun()
 
-        with right_col:
-            with st.container(border=True):
-                render_nav_group("Setup & Controls", nav_groups["Setup & Controls"], st.session_state.page, "nav")
-            st.markdown(
-                """
-                <div class='ww-helper-card'>
-                    <div class='ww-helper-title'>Recommended flow</div>
-                    <div class='ww-helper-text'>Payroll Control Centre → Payroll Calculation → Salary Summary → Payroll Approval</div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+    with st.expander("Open full navigation", expanded=False):
+        if user["role"] == "Supervisor":
+            render_nav_group("Supervisor", nav_groups["Supervisor"], st.session_state.page, "nav_supervisor")
+        else:
+            left_col, right_col = st.columns([1.0, 1.0], gap="large")
+            with left_col:
+                with st.container(border=True):
+                    render_nav_group("Workflows", nav_groups["Workflows"], st.session_state.page, "nav")
+                with st.container(border=True):
+                    render_nav_group("Payroll & Reports", nav_groups["Payroll & Reports"], st.session_state.page, "nav")
+            with right_col:
+                with st.container(border=True):
+                    render_nav_group("Setup & Recovery", nav_groups["Setup & Recovery"], st.session_state.page, "nav")
+                with st.container(border=True):
+                    render_nav_group("Technical", nav_groups["Technical"], st.session_state.page, "nav")
+                st.markdown(
+                    """
+                    <div class='ww-helper-card'>
+                        <div class='ww-helper-title'>Recommended flow</div>
+                        <div class='ww-helper-text'>Payroll Control Centre → Payroll Calculation → Salary Summary → Payroll Approval.</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
     allowed_roles_for_login = user_allowed_roles(auth_user)
     show_switch_role = len(allowed_roles_for_login) > 1
@@ -3302,6 +3347,7 @@ def page_navigation():
                 wagewise_logout()
 
     return st.session_state.page
+
 
 def supervisor_dashboard_page():
     st.subheader("Supervisor Quick Actions")
@@ -3355,9 +3401,9 @@ def supervisor_dashboard_page():
     recent_advances = advances[advances["Created_By"].astype(str).str.lower() == user_email.lower()].tail(5) if (not advances.empty and "Created_By" in advances.columns) else advances
 
     tab1, tab2 = st.tabs(["Recent Leaves", "Recent Advances"])
-    with tab1:
+    if requested_section == "Advance Master":
         st.dataframe(recent_leaves, use_container_width=True)
-    with tab2:
+    if requested_section == "Users & Access":
         st.dataframe(recent_advances, use_container_width=True)
 
 
@@ -5454,7 +5500,10 @@ def tech_page():
         st.warning("Only Admin users can access System Admin utilities.")
         return
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Advance Master", "Users & Access", "Recovery", "Technical Checks", "Demo Mode Guide", "System Notes"])
+    requested_section = st.session_state.get("page", "Advance Master")
+    if requested_section not in ["Advance Master", "Users & Access", "Recovery", "Technical Checks", "Demo Mode Guide", "System Notes"]:
+        requested_section = "Advance Master"
+    st.markdown(f"### {requested_section}")
 
     def build_case_schedule_from_inputs(advance_id, emp_id, amount, start_month_label, first_deduction, remaining_months, status):
         start_year, start_month = parse_month_label(start_month_label)
@@ -5522,7 +5571,7 @@ def tech_page():
             return str(emp_id)
         return f"{match.iloc[0]['Name']} ({emp_id})"
 
-    with tab1:
+    if requested_section == "Advance Master":
         st.markdown("### Unified Advance Editor")
         st.caption("Select one Advance ID. Employee is read-only to protect data integrity. Editing amount/repayment rebuilds the schedule for the same employee.")
 
@@ -5671,7 +5720,7 @@ def tech_page():
             except Exception as e:
                 st.error(f"Could not create advance: {e}")
 
-    with tab2:
+    if requested_section == "Users & Access":
         st.markdown("### User & Access Manager")
         st.caption("Create users, edit login email IDs, reset passwords, activate/deactivate users, or switch role-card access ON/OFF.")
 
@@ -5679,6 +5728,8 @@ def tech_page():
             ok, msg = ensure_users_table_storage_columns()
             if ok:
                 set_confirmation("Users storage columns verified/repaired.", celebrate=True)
+                st.session_state.page = "Users & Access"
+                st.session_state.scroll_target_note = "Users storage repaired. You are still in Users & Access."
                 st.rerun()
             else:
                 st.error(f"Users storage repair failed: {msg}")
@@ -5752,7 +5803,6 @@ def tech_page():
                 set_confirmation(f"Login created and verified for {clean_email}.", celebrate=True)
                 st.session_state.page = "Users & Access"
                 st.session_state.scroll_target_note = "User created. You are still in Users & Access."
-                st.session_state.auto_jump_to_selected_section = True
                 st.rerun()
 
         st.divider()
@@ -5819,7 +5869,6 @@ def tech_page():
                     set_confirmation(f"Login updated and verified for {clean_email}.", celebrate=True)
                     st.session_state.page = "Users & Access"
                     st.session_state.scroll_target_note = "User updated. You are still in Users & Access."
-                    st.session_state.auto_jump_to_selected_section = True
                     st.rerun()
 
             st.markdown("#### Delete Login")
@@ -5848,16 +5897,16 @@ def tech_page():
                     set_confirmation(f"Login deleted and verified: {selected_email}.", celebrate=True)
                     st.rerun()
 
-    with tab3:
+    if requested_section == "Recovery":
         section_rollback_panel()
 
-    with tab4:
+    if requested_section == "Technical Checks":
         database_health_panel()
 
-    with tab5:
+    if requested_section == "Demo Mode Guide":
         demo_mode_guide_panel()
 
-    with tab6:
+    if requested_section == "System Notes":
         st.markdown("### Utility definitions")
         st.info("Advance ID is the single control point. Employee is locked after advance creation to protect data integrity.")
         st.info("Unified Advance Editor writes both advance_cases and advance_schedule together.")
@@ -5935,7 +5984,6 @@ def main():
     page = page_navigation()
     if st.session_state.get("scroll_target_note"):
         st.markdown(f"<div class='ww-nav-selected-note'>{st.session_state.pop('scroll_target_note')}</div>", unsafe_allow_html=True)
-    auto_jump_to_selected_section()
     show_action_focus()
     if page == "Dashboard":
         dashboard_page()
@@ -5945,7 +5993,7 @@ def main():
         salary_summary_page()
     elif page == "Leave":
         leave_page()
-    elif page in ["Users & Access", "System Admin", "Tech"]:
+    elif page in ["Users & Access", "Advance Master", "Recovery", "Technical Checks", "Demo Mode Guide", "System Notes", "System Admin", "Tech"]:
         tech_page()
     elif page == "Bulk Leave Upload":
         bulk_leave_upload_page()
