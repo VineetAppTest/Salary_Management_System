@@ -2721,6 +2721,56 @@ def apply_theme():
         }}
     }}
 
+
+    /* V116.9 Floating To-the-Top button: always visible without taking page space */
+    .ww-page-top-anchor {{
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+    }}
+    .ww-floating-top-button {{
+        position: fixed !important;
+        right: 18px;
+        bottom: 22px;
+        z-index: 999999;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 84px;
+        height: 44px;
+        padding: 0 14px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #0B4F71, #0E9384);
+        color: #FFFFFF !important;
+        text-decoration: none !important;
+        font-size: 13px;
+        font-weight: 950;
+        letter-spacing: .01em;
+        box-shadow: 0 10px 28px rgba(11,79,113,.28);
+        border: 1px solid rgba(255,255,255,.35);
+        opacity: .96;
+    }}
+    .ww-floating-top-button:hover,
+    .ww-floating-top-button:focus {{
+        color: #FFFFFF !important;
+        text-decoration: none !important;
+        transform: translateY(-1px);
+        box-shadow: 0 14px 32px rgba(11,79,113,.34);
+    }}
+    @media (max-width: 768px) {{
+        .ww-floating-top-button {{
+            right: 12px;
+            bottom: 14px;
+            min-width: 74px;
+            height: 40px;
+            padding: 0 12px;
+            font-size: 12px;
+        }}
+    }}
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -4183,6 +4233,7 @@ def page_heading_text(page_name):
 def render_wagewise_header():
     st.markdown(
         f"""
+        <div id='ww-page-top' class='ww-page-top-anchor'></div>
         <div class='ww-app-shell'>
             <div class='ww-primary-heading'>WageWise <span class='build-marker'>Build {BUILD_VERSION}</span></div>
             <div class='ww-secondary-heading'>Salary Management System</div>
@@ -7054,6 +7105,14 @@ def render_to_top_button():
         )
 
 
+def render_floating_to_top_button():
+    """Always-visible floating shortcut to return to the WageWise header/top anchor."""
+    st.markdown(
+        "<a class='ww-floating-top-button' href='#ww-page-top' title='Go to top'>⬆ Top</a>",
+        unsafe_allow_html=True,
+    )
+
+
 def main():
     st.set_page_config(page_title="WageWise", page_icon="💼", layout="wide")
     apply_theme()
@@ -7075,6 +7134,7 @@ def main():
     apply_v116_1_backend_requested_actions()
 
     render_wagewise_header()
+    render_floating_to_top_button()
     show_confirmation_area()
     page = page_navigation()
     render_page_heading(page)
@@ -7108,7 +7168,7 @@ def main():
     elif page == "Logs":
         logs_page()
 
-    render_to_top_button()
+    # V116.9: floating top button is always visible; old bottom button is no longer rendered.
     trigger_auto_scroll_to_content()
 
     if st.session_state.get("scroll_target_note"):
