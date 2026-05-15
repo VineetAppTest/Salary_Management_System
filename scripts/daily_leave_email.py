@@ -198,10 +198,29 @@ def main():
         if col not in leaves.columns:
             leaves[col] = ""
 
+    # Timestamp is stored by the app as text without timezone. Treat it as local business time.
     leaves["_reported_at"] = parse_timestamp_series(leaves["Timestamp"])
     leaves = leaves[leaves["_reported_at"].notna()].copy()
-    # Timestamp is stored without timezone in the app; treat it as local business time.
-    leaves = leaves[(leaves["_reported_at"] >= pd.Timestamp(window_start.replace(tzinfo=None))) & (leaves["_reported_at"] <= pd.Timestamp(window_end.replace(tzinfo=None)))].copy()
+
+    if leaves["_reported_at"].dt.tz is None:
+        leaves["_reported_at"] = leaves["_reported_at"].dt.tz_localize(tz, nonexistent="shift_forward", ambiguous="NaT")
+    else:
+        leaves["_reported_at"] = leaves["_reported_at"].dt.tz_convert(tz)
+
+    print(f"Window Start: {window_start.isoformat(timespec='seconds')}")
+    print(f"Window End: {window_end.isoformat(timespec='seconds')}")
+    print(f"Total Leave Rows Before Timestamp Filter: {len(leaves)}")
+    try:
+        print(leaves[["Timestamp", "_reported_at", "Date", "Emp_ID", "Leave_Type", "Status"]].tail(10).to_string(index=False))
+    except Exception as diag_error:
+        print(f"Diagnostic print skipped: {diag_error}")
+
+    leaves = leaves[
+        (leaves["_reported_at"] >= pd.Timestamp(window_start)) &
+        (leaves["_reported_at"] <= pd.Timestamp(window_end))
+    ].copy()
+
+    print(f"Rows After Window Filter: {len(leaves)}")
     if "Status" in leaves.columns:
         leaves = leaves[~leaves["Status"].astype(str).str.lower().isin(["cancelled", "canceled", "rejected"])].copy()
 
