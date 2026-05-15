@@ -1,12 +1,12 @@
 """
-WageWise daily leave email job.
+WageWise daily leave email job v3.
 Runs at 10:00 AM IST via GitHub Actions and emails admins/supervisors
-with APPROVED leave entries reported from previous day 10:00 AM to current day 09:59:59 AM.
+with leave entries reported from previous day 10:00 AM to current day 09:59:59 AM.
 
-Business logic:
-- Any leave for any leave date is included if it was ENTERED/REPORTED between previous day 10 AM and current day 10 AM.
-- Only Status = Approved is included.
-- Cancelled / Canceled / Rejected / Pending / blank statuses are excluded.
+Business rule:
+- Any leave entered/reported between today 10 AM and tomorrow 10 AM appears in tomorrow's email.
+- Only Approved leaves are shown in the leave table.
+- If there are no approved leaves, still send a "No approved leaves marked" email.
 
 Required GitHub repository secrets:
 - DATABASE_URL or SUPABASE_DB_URL
@@ -33,7 +33,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 
-APP_VERSION = "WageWise Daily Leave Email v2 - reported-window + approved-only"
+JOB_VERSION = "WageWise Daily Leave Email v3 - approved-only + always-send-no-news"
 
 
 def env(name: str, default: str = "") -> str:
@@ -61,6 +61,18 @@ def ensure_notification_log(engine):
                 "Subject" TEXT
             )
         '''))
+        conn.execute(text('''
+            CREATE TABLE IF NOT EXISTS "sms_leave_email_daily_log" (
+                "Window_Key" TEXT PRIMARY KEY,
+                "Sent_At" TEXT,
+                "Window_Start" TEXT,
+                "Window_End" TEXT,
+                "Recipient_Count" TEXT,
+                "Subject" TEXT,
+                "Approved_Row_Count" TEXT,
+                "Status" TEXT
+            )
+        '''))
 
 
 def read_table(engine, table_name: str) -> pd.DataFrame:
@@ -71,32 +83,9 @@ def read_table(engine, table_name: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def parse_timestamp_series_as_ist(series: pd.Series, timezone_name: str) -> pd.Series:
-    """Parse app timestamp text and treat timezone-naive values as local business time."""
-    parsed = pd.to_datetime(series.astype(str).str.strip(), errors="coerce", dayfirst=False)
-    missing = parsed.isna()
-    if missing.any():
-        parsed.loc[missing] = pd.to_datetime(series.astype(str).str.strip()[missing], errors="coerce", dayfirst=True)
-
-    # App currently stores timestamp as text without timezone, e.g. 2026-05-14T03:34:41.
-    # Treat those values as local business time, not UTC.
-    try:
-        if getattr(parsed.dt, "tz", None) is None:
-            parsed = parsed.dt.tz_localize(timezone_name)
-        else:
-            parsed = parsed.dt.tz_convert(timezone_name)
-    except Exception:
-        # Fallback for mixed timezone values: parse as naive then localize.
-        parsed = pd.to_datetime(series.astype(str).str.strip(), errors="coerce").dt.tz_localize(timezone_name)
-    return parsed
-
-
 def format_subject_window(dt: datetime) -> str:
     suffix = "th" if 11 <= dt.day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(dt.day % 10, "th")
-    try:
-        hour = dt.strftime("%-I %p").lower().replace(" ", "")
-    except ValueError:
-        hour = dt.strftime("%#I %p").lower().replace(" ", "")
+    hour = dt.strftime("%-I %p").lower().replace(" ", "")
     hour = hour.replace("am", " am").replace("pm", " pm")
     return f"{dt.day}{suffix} {dt.strftime('%b')} {hour}"
 
@@ -141,7 +130,13 @@ def get_recipients(users: pd.DataFrame) -> list[str]:
 
 def build_html_table(rows: pd.DataFrame) -> str:
     if rows.empty:
-        return "<p>No approved leave entries were marked in this window.</p>"
+        return """
+        <div style="border:1px solid #CBD5E0;border-radius:8px;padding:14px;background:#F7FAFC;margin-top:12px;">
+            <p style="margin:0;font-size:15px;"><strong>No approved leaves marked in this reporting window.</strong></p>
+            <p style="margin:8px 0 0 0;color:#4A5568;font-size:13px;">This is an automated no-news confirmation from WageWise.</p>
+        </div>
+        """
+
     safe_rows = []
     for _, r in rows.iterrows():
         safe_rows.append(
@@ -149,14 +144,14 @@ def build_html_table(rows: pd.DataFrame) -> str:
             f"<td>{html.escape(str(r.get('Date', '')))}</td>"
             f"<td>{html.escape(str(r.get('Name', '')))}</td>"
             f"<td>{html.escape(str(r.get('Leave_Type', '')))}</td>"
-            f"<td>{html.escape(str(r.get('Status', '')))}</td>"
             f"<td>{html.escape(str(r.get('Remarks', '')))}</td>"
+            f"<td>{html.escape(str(r.get('Supervisor', '')))}</td>"
             "</tr>"
         )
     return """
     <table cellpadding="8" cellspacing="0" border="1" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px;width:100%;">
         <thead style="background:#1F4E79;color:#ffffff;">
-            <tr><th>Leave Date</th><th>Name</th><th>Type of Leave</th><th>Status</th><th>Remarks</th></tr>
+            <tr><th>Date</th><th>Name</th><th>Type of Leave</th><th>Remarks</th><th>Supervisor</th></tr>
         </thead>
         <tbody>{}</tbody>
     </table>
@@ -192,26 +187,26 @@ def send_email(to_emails: list[str], subject: str, html_body: str):
         server.sendmail(from_email, to_emails, msg.as_string())
 
 
+def localize_timestamp_series(series: pd.Series, timezone: str) -> pd.Series:
+    parsed = pd.to_datetime(series.astype(str).str.strip(), errors="coerce")
+    # App stores timestamps as local business time without explicit timezone.
+    return parsed.dt.tz_localize(timezone)
+
+
 def main():
-    timezone_name = env("APP_TIMEZONE", "Asia/Kolkata")
-    tz = ZoneInfo(timezone_name)
+    tz_name = env("APP_TIMEZONE", "Asia/Kolkata")
+    tz = ZoneInfo(tz_name)
     now = datetime.now(tz)
 
-    # This implements: entries reported from yesterday 10:00 AM to today 09:59:59 AM
-    # are included in today's 10 AM email, regardless of the leave Date.
     window_end = now.replace(hour=9, minute=59, second=59, microsecond=0)
+    # If manually run before 10 AM, use the previous completed 10 AM window.
     if now < now.replace(hour=10, minute=0, second=0, microsecond=0):
         window_end = window_end - timedelta(days=1)
     window_start = (window_end + timedelta(seconds=1)) - timedelta(days=1)
 
     subject_start = window_start.replace(hour=10, minute=0, second=0)
     subject_end = (window_end + timedelta(seconds=1)).replace(hour=10, minute=0, second=0)
-    subject = f"Approved Leaves Marked from {format_subject_window(subject_start)} to {format_subject_window(subject_end)}"
-
-    print(f"{APP_VERSION}")
-    print(f"Run Time: {now.isoformat(timespec='seconds')}")
-    print(f"Window Start: {window_start.isoformat(timespec='seconds')}")
-    print(f"Window End: {window_end.isoformat(timespec='seconds')}")
+    window_label = f"{format_subject_window(subject_start)} to {format_subject_window(subject_end)}"
 
     engine = get_engine()
     ensure_notification_log(engine)
@@ -220,70 +215,79 @@ def main():
     employees = read_table(engine, "sms_employees")
     users = read_table(engine, "sms_users")
     sent_log = read_table(engine, "sms_leave_email_log")
-
-    if leaves.empty:
-        print("No leave entries table data found. Nothing to email.")
-        return
-
-    for col in ["Date", "Emp_ID", "Leave_Type", "Remarks", "Supervisor", "Timestamp", "Status"]:
-        if col not in leaves.columns:
-            leaves[col] = ""
-
-    print(f"Total Leave Rows Before Filter: {len(leaves)}")
-
-    leaves["_reported_at"] = parse_timestamp_series_as_ist(leaves["Timestamp"], timezone_name)
-    leaves = leaves[leaves["_reported_at"].notna()].copy()
-    print(f"Rows With Valid Timestamp: {len(leaves)}")
-
-    print("Latest parsed leave timestamps:")
-    try:
-        print(leaves[["Timestamp", "_reported_at", "Date", "Emp_ID", "Leave_Type", "Status"]].tail(10).to_string(index=False))
-    except Exception:
-        pass
-
-    leaves = leaves[
-        (leaves["_reported_at"] >= pd.Timestamp(window_start)) &
-        (leaves["_reported_at"] <= pd.Timestamp(window_end))
-    ].copy()
-    print(f"Rows After Reported-Time Window Filter: {len(leaves)}")
-
-    # Business rule: only approved leaves should be emailed.
-    leaves = leaves[leaves["Status"].astype(str).str.strip().str.lower().eq("approved")].copy()
-    print(f"Rows After Approved-Only Filter: {len(leaves)}")
-
-    leaves["Leave_Key"] = leaves.apply(leave_key, axis=1)
-    sent_keys = set(sent_log.get("Leave_Key", pd.Series(dtype=str)).astype(str).tolist()) if not sent_log.empty else set()
-    leaves = leaves[~leaves["Leave_Key"].astype(str).isin(sent_keys)].copy()
-    print(f"Rows After Already-Sent Filter: {len(leaves)}")
-
-    if not employees.empty and "Emp_ID" in employees.columns:
-        emp_cols = [c for c in ["Emp_ID", "Name"] if c in employees.columns]
-        if "Name" in emp_cols:
-            emp_lookup = employees[emp_cols].drop_duplicates("Emp_ID")
-            leaves = leaves.merge(emp_lookup, on="Emp_ID", how="left")
-
-    if "Name" not in leaves.columns:
-        leaves["Name"] = leaves["Emp_ID"]
-    leaves["Name"] = leaves["Name"].fillna(leaves["Emp_ID"]).astype(str)
-
-    leaves = leaves.sort_values(["_reported_at", "Date", "Name"], na_position="last")
-    display_rows = leaves[["Date", "Name", "Leave_Type", "Status", "Remarks", "Leave_Key"]].copy()
+    daily_log = read_table(engine, "sms_leave_email_daily_log")
 
     recipients = get_recipients(users)
-    print(f"Valid Recipient Count: {len(recipients)}")
     if not recipients:
         print("No valid admin/supervisor recipient emails found. Set EMAIL_RECIPIENTS or update Access Manager emails.")
         return
 
-    if display_rows.empty:
-        print(f"No approved leave entries for window. Subject would have been: {subject}")
-        return
+    subject = f"Approved Leaves Marked from {window_label}"
+    window_key = hashlib.sha256(f"{window_start.isoformat()}|{window_end.isoformat()}|approved_leave_daily".encode("utf-8")).hexdigest()
+
+    if not daily_log.empty and "Window_Key" in daily_log.columns:
+        already_sent_daily = set(daily_log["Window_Key"].astype(str).tolist())
+        if window_key in already_sent_daily:
+            print(f"Daily email already sent for this window. Window: {window_label}")
+            return
+
+    if leaves.empty:
+        print("No leave entries table data found. Sending no-news email.")
+        display_rows = pd.DataFrame(columns=["Date", "Name", "Leave_Type", "Remarks", "Supervisor", "Leave_Key"])
+    else:
+        for col in ["Date", "Emp_ID", "Leave_Type", "Remarks", "Supervisor", "Timestamp", "Status"]:
+            if col not in leaves.columns:
+                leaves[col] = ""
+
+        leaves["_reported_at"] = localize_timestamp_series(leaves["Timestamp"], tz_name)
+        leaves = leaves[leaves["_reported_at"].notna()].copy()
+
+        print(f"{JOB_VERSION}")
+        print(f"Run Time: {now.isoformat(timespec='seconds')}")
+        print(f"Window Start: {window_start.isoformat(timespec='seconds')}")
+        print(f"Window End: {window_end.isoformat(timespec='seconds')}")
+        print(f"Total Leave Rows Before Filter: {len(read_table(engine, 'sms_leave_entries'))}")
+        print(f"Rows With Valid Timestamp: {len(leaves)}")
+        print("Latest parsed leave timestamps:")
+        try:
+            print(leaves[["Timestamp", "_reported_at", "Date", "Emp_ID", "Leave_Type", "Status"]].tail(10).to_string(index=False))
+        except Exception:
+            pass
+
+        leaves = leaves[
+            (leaves["_reported_at"] >= pd.Timestamp(window_start)) &
+            (leaves["_reported_at"] <= pd.Timestamp(window_end))
+        ].copy()
+        print(f"Rows After Reported-Time Window Filter: {len(leaves)}")
+
+        leaves = leaves[leaves["Status"].astype(str).str.lower().eq("approved")].copy()
+        print(f"Rows After Approved-Only Filter: {len(leaves)}")
+
+        leaves["Leave_Key"] = leaves.apply(leave_key, axis=1)
+        sent_keys = set(sent_log.get("Leave_Key", pd.Series(dtype=str)).astype(str).tolist()) if not sent_log.empty else set()
+        leaves = leaves[~leaves["Leave_Key"].astype(str).isin(sent_keys)].copy()
+        print(f"Rows After Already-Sent Filter: {len(leaves)}")
+
+        if not employees.empty and "Emp_ID" in employees.columns:
+            emp_lookup = employees[[c for c in ["Emp_ID", "Name"] if c in employees.columns]].drop_duplicates("Emp_ID")
+            leaves = leaves.merge(emp_lookup, on="Emp_ID", how="left")
+        if "Name" not in leaves.columns:
+            leaves["Name"] = leaves["Emp_ID"]
+        leaves["Name"] = leaves["Name"].fillna(leaves["Emp_ID"]).astype(str)
+
+        leaves = leaves.sort_values(["_reported_at", "Date", "Name"], na_position="last")
+        display_rows = leaves[["Date", "Name", "Leave_Type", "Remarks", "Supervisor", "Leave_Key"]].copy()
+
+    approved_count = len(display_rows)
+    if approved_count == 0:
+        subject = f"No Approved Leaves Marked from {window_label}"
 
     html_body = f"""
     <div style="font-family:Arial,sans-serif;color:#1A202C;">
-        <h2 style="color:#1F4E79;margin-bottom:6px;">WageWise Daily Approved Leave Summary</h2>
-        <p><strong>Reported Window:</strong> {html.escape(subject.replace('Approved Leaves Marked from ', ''))}</p>
-        <p>This email includes approved leave entries reported during the window, regardless of the leave date.</p>
+        <h2 style="color:#1F4E79;margin-bottom:6px;">WageWise Daily Leave Summary</h2>
+        <p><strong>Window:</strong> {html.escape(window_label)}</p>
+        <p><strong>Approved leave entries:</strong> {approved_count}</p>
+        <p>This email includes leave entries reported up to 9:59 AM and only includes leaves with Status = Approved.</p>
         {build_html_table(display_rows)}
         <p style="font-size:12px;color:#4A5568;margin-top:16px;">Generated automatically by WageWise.</p>
     </div>
@@ -292,26 +296,38 @@ def main():
     send_email(recipients, subject, html_body)
 
     now_iso = datetime.now(tz).isoformat(timespec="seconds")
-    log_rows = [
-        {
-            "Leave_Key": str(r["Leave_Key"]),
+    with engine.begin() as conn:
+        conn.execute(text('''
+            INSERT INTO "sms_leave_email_daily_log" ("Window_Key", "Sent_At", "Window_Start", "Window_End", "Recipient_Count", "Subject", "Approved_Row_Count", "Status")
+            VALUES (:Window_Key, :Sent_At, :Window_Start, :Window_End, :Recipient_Count, :Subject, :Approved_Row_Count, :Status)
+            ON CONFLICT ("Window_Key") DO NOTHING
+        '''), {
+            "Window_Key": window_key,
             "Sent_At": now_iso,
             "Window_Start": window_start.isoformat(timespec="seconds"),
             "Window_End": window_end.isoformat(timespec="seconds"),
             "Recipient_Count": str(len(recipients)),
             "Subject": subject,
-        }
-        for _, r in display_rows.iterrows()
-    ]
-    with engine.begin() as conn:
-        for row in log_rows:
-            conn.execute(text('''
-                INSERT INTO "sms_leave_email_log" ("Leave_Key", "Sent_At", "Window_Start", "Window_End", "Recipient_Count", "Subject")
-                VALUES (:Leave_Key, :Sent_At, :Window_Start, :Window_End, :Recipient_Count, :Subject)
-                ON CONFLICT ("Leave_Key") DO NOTHING
-            '''), row)
+            "Approved_Row_Count": str(approved_count),
+            "Status": "sent",
+        })
 
-    print(f"Sent leave email to {len(recipients)} recipient(s). Rows: {len(display_rows)}. Subject: {subject}")
+        if approved_count > 0:
+            for _, r in display_rows.iterrows():
+                conn.execute(text('''
+                    INSERT INTO "sms_leave_email_log" ("Leave_Key", "Sent_At", "Window_Start", "Window_End", "Recipient_Count", "Subject")
+                    VALUES (:Leave_Key, :Sent_At, :Window_Start, :Window_End, :Recipient_Count, :Subject)
+                    ON CONFLICT ("Leave_Key") DO NOTHING
+                '''), {
+                    "Leave_Key": str(r["Leave_Key"]),
+                    "Sent_At": now_iso,
+                    "Window_Start": window_start.isoformat(timespec="seconds"),
+                    "Window_End": window_end.isoformat(timespec="seconds"),
+                    "Recipient_Count": str(len(recipients)),
+                    "Subject": subject,
+                })
+
+    print(f"Sent daily leave email to {len(recipients)} recipient(s). Approved rows: {approved_count}. Subject: {subject}")
 
 
 if __name__ == "__main__":
