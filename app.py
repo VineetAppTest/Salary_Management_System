@@ -3108,6 +3108,31 @@ def ensure_user_access_columns(users):
 
 
 def login_screen():
+    # V116.7 login top padding fix: keep the WageWise badge/title away from the phone notch/browser top edge.
+    # Scoped to the login screen so internal app pages keep the compact mobile layout.
+    st.markdown("""
+    <style>
+    @media (max-width: 768px) {
+        .login-page-shell {
+            margin-top: 24px !important;
+            padding-top: 4px !important;
+        }
+        .login-hero {
+            margin-top: 10px !important;
+            padding-top: 22px !important;
+        }
+        .login-badge {
+            margin-top: 2px !important;
+        }
+    }
+    @media (min-width: 769px) {
+        .login-page-shell {
+            margin-top: 30px !important;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     st.markdown("""
     <div class='login-page-shell'>
         <div class='login-hero'>
