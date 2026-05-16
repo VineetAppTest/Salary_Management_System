@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 from io import BytesIO
 from sqlalchemy import create_engine, text
 
@@ -87,7 +86,7 @@ def prorate_paid_leave_quota(level, service_fraction):
     return max(0.0, int((base * float(service_fraction)) * 2) / 2.0)
 
 
-BUILD_VERSION = "V116.5"
+BUILD_VERSION = "V116.6"
 BUILD_LABEL = "V116.5 · Daily Leave Email Automation"
 NAV_SCROLL_ANCHOR = "ww-section-content-anchor"
 
@@ -2720,53 +2719,64 @@ def apply_theme():
             font-size: 19px !important;
         }}
     }}
-
-
-    /* V116.9 Floating To-the-Top button: always visible without taking page space */
+    /* V116.6 Mobile Top button hotfix: always visible, no iframe, no blank mobile space */
     .ww-page-top-anchor {{
-        position: absolute;
+        display: block;
+        position: relative;
         top: 0;
-        left: 0;
         width: 1px;
         height: 1px;
         overflow: hidden;
     }}
     .ww-floating-top-button {{
         position: fixed !important;
-        right: 18px;
-        bottom: 22px;
-        z-index: 999999;
-        display: inline-flex;
+        right: 14px;
+        bottom: 16px;
+        z-index: 2147483647;
+        display: inline-flex !important;
         align-items: center;
         justify-content: center;
-        min-width: 84px;
-        height: 44px;
-        padding: 0 14px;
+        min-width: 58px;
+        min-height: 38px;
+        padding: 9px 13px;
         border-radius: 999px;
         background: linear-gradient(135deg, #0B4F71, #0E9384);
         color: #FFFFFF !important;
         text-decoration: none !important;
         font-size: 13px;
         font-weight: 950;
-        letter-spacing: .01em;
-        box-shadow: 0 10px 28px rgba(11,79,113,.28);
+        line-height: 1;
+        box-shadow: 0 6px 18px rgba(0,0,0,.28);
         border: 1px solid rgba(255,255,255,.35);
         opacity: .96;
+        -webkit-tap-highlight-color: transparent;
     }}
     .ww-floating-top-button:hover,
-    .ww-floating-top-button:focus {{
+    .ww-floating-top-button:focus,
+    .ww-floating-top-button:active {{
         color: #FFFFFF !important;
         text-decoration: none !important;
-        transform: translateY(-1px);
-        box-shadow: 0 14px 32px rgba(11,79,113,.34);
+        filter: brightness(.96);
     }}
     @media (max-width: 768px) {{
+        .block-container {{
+            padding-top: .55rem !important;
+            padding-left: .65rem !important;
+            padding-right: .65rem !important;
+            padding-bottom: 2.25rem !important;
+        }}
+        .ww-app-shell {{
+            padding: 18px 14px 18px 14px !important;
+            margin-top: 6px !important;
+            margin-bottom: 10px !important;
+            min-height: auto !important;
+        }}
         .ww-floating-top-button {{
-            right: 12px;
-            bottom: 14px;
-            min-width: 74px;
-            height: 40px;
-            padding: 0 12px;
+            right: 10px;
+            bottom: 12px;
+            min-width: 52px;
+            min-height: 36px;
+            padding: 8px 11px;
             font-size: 12px;
         }}
     }}
@@ -4122,88 +4132,15 @@ def render_selected_content_anchor():
     )
 
 def trigger_auto_scroll_to_content():
-    """V115.4: mobile-strengthened delayed auto-scroll after Streamlit rerun.
+    """V116.6 hotfix: avoid iframe/script based auto-scroll.
 
-    Uses multiple scroll targets and retry attempts because Streamlit rerenders the
-    parent document and mobile browsers can ignore the first scroll command.
+    The previous implementation used old iframe-based HTML injection, which creates
+    an iframe and triggers Streamlit's deprecation warning. On mobile this could
+    also reserve unexpected blank screen space. We keep the pending flag cleanup
+    but do not inject an iframe.
     """
-    if not st.session_state.get("pending_auto_scroll_to_content"):
-        return
-
-    st.session_state.pop("pending_auto_scroll_to_content", None)
-    target_label = str(st.session_state.get("page", "selected section")).replace("'", "")
-    components.html(
-        f"""
-        <script>
-        (function() {{
-            const targetId = "ww-section-content-anchor";
-            const label = "{target_label}";
-            let attempts = 0;
-            const maxAttempts = 22;
-
-            function parentDocument() {{
-                try {{ return window.parent.document; }} catch (e) {{ return document; }}
-            }}
-
-            function parentWindow() {{
-                try {{ return window.parent; }} catch (e) {{ return window; }}
-            }}
-
-            function findTarget() {{
-                const doc = parentDocument();
-                return doc.getElementById(targetId) || document.getElementById(targetId);
-            }}
-
-            function getScrollContainer(doc) {{
-                return doc.querySelector('[data-testid="stAppViewContainer"]')
-                    || doc.querySelector('.main')
-                    || doc.scrollingElement
-                    || doc.documentElement
-                    || doc.body;
-            }}
-
-            function stableScroll() {{
-                attempts += 1;
-                const doc = parentDocument();
-                const win = parentWindow();
-                const target = findTarget();
-                if (target) {{
-                    const rect = target.getBoundingClientRect();
-                    const currentY = win.pageYOffset || doc.documentElement.scrollTop || doc.body.scrollTop || 0;
-                    const offset = 14;
-                    const desiredY = Math.max(0, currentY + rect.top - offset);
-                    try {{
-                        win.scrollTo({{ top: desiredY, behavior: 'smooth' }});
-                    }} catch(e) {{
-                        win.scrollTo(0, desiredY);
-                    }}
-                    try {{
-                        target.scrollIntoView({{ behavior: 'smooth', block: 'start', inline: 'nearest' }});
-                    }} catch(e) {{
-                        target.scrollIntoView(true);
-                    }}
-                    try {{
-                        const container = getScrollContainer(doc);
-                        if (container && container.scrollTo) {{
-                            container.scrollTo({{ top: Math.max(0, target.offsetTop - offset), behavior: 'smooth' }});
-                        }}
-                    }} catch(e) {{}}
-                    return;
-                }}
-                if (attempts < maxAttempts) {{
-                    setTimeout(stableScroll, 140);
-                }}
-            }}
-
-            setTimeout(stableScroll, 220);
-            setTimeout(stableScroll, 650);
-            setTimeout(stableScroll, 1100);
-        }})();
-        </script>
-        """,
-        height=0,
-        scrolling=False,
-    )
+    if st.session_state.get("pending_auto_scroll_to_content"):
+        st.session_state.pop("pending_auto_scroll_to_content", None)
 
 
 def page_heading_text(page_name):
@@ -7081,36 +7018,17 @@ def logs_page():
     st.dataframe(read_table("cleansing_log").tail(150), use_container_width=True)
 
 def render_to_top_button():
-    """Small bottom utility to jump back to the top of the app without manual scrolling."""
+    """Bottom fallback Top link without iframe or deprecated components."""
     st.markdown("---")
-    if st.button("⬆ To the Top", use_container_width=True, key="ww_to_top_button"):
-        components.html(
-            """
-            <script>
-            (function() {
-                function scrollTopNow() {
-                    try { window.parent.scrollTo({top: 0, behavior: 'smooth'}); } catch(e) {}
-                    try { window.parent.document.querySelector('[data-testid="stAppViewContainer"]').scrollTo({top: 0, behavior: 'smooth'}); } catch(e) {}
-                    try { window.parent.document.documentElement.scrollTop = 0; } catch(e) {}
-                    try { window.parent.document.body.scrollTop = 0; } catch(e) {}
-                }
-                scrollTopNow();
-                setTimeout(scrollTopNow, 150);
-                setTimeout(scrollTopNow, 500);
-            })();
-            </script>
-            """,
-            height=0,
-            scrolling=False,
-        )
+    st.html("<a class='ww-floating-top-button' href='#ww-page-top' target='_self' title='Go to top'>⬆ Top</a>")
 
 
 def render_floating_to_top_button():
-    """Always-visible floating shortcut to return to the WageWise header/top anchor."""
-    st.markdown(
-        "<a class='ww-floating-top-button' href='#ww-page-top' title='Go to top'>⬆ Top</a>",
-        unsafe_allow_html=True,
-    )
+    """Always-visible floating shortcut to return to the WageWise header/top anchor.
+
+    Uses st.html(), not deprecated/iframe HTML helpers.
+    """
+    st.html("<a class='ww-floating-top-button' href='#ww-page-top' target='_self' title='Go to top'>⬆ Top</a>")
 
 
 def main():
