@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from io import BytesIO
 from sqlalchemy import create_engine, text
 
@@ -86,7 +87,7 @@ def prorate_paid_leave_quota(level, service_fraction):
     return max(0.0, int((base * float(service_fraction)) * 2) / 2.0)
 
 
-BUILD_VERSION = "V116.6"
+BUILD_VERSION = "V116.8"
 BUILD_LABEL = "V116.5 · Daily Leave Email Automation"
 NAV_SCROLL_ANCHOR = "ww-section-content-anchor"
 
@@ -2784,6 +2785,41 @@ def apply_theme():
     </style>
     """, unsafe_allow_html=True)
 
+    # V116.8 regression repair: final global header cushion.
+    # Several older CSS blocks compete on .block-container padding. This final
+    # override protects page headings from being cut on phone and desktop.
+    st.markdown("""
+    <style>
+    .block-container {
+        padding-top: 2.25rem !important;
+    }
+    .ww-app-shell {
+        margin-top: 1.05rem !important;
+    }
+    .ww-page-heading-card,
+    .ww-section-update,
+    .top-nav {
+        margin-top: 0.85rem !important;
+    }
+    @media (max-width: 768px) {
+        .block-container {
+            padding-top: 1.75rem !important;
+            padding-left: 0.75rem !important;
+            padding-right: 0.75rem !important;
+        }
+        .ww-app-shell {
+            margin-top: 1.25rem !important;
+            padding-top: 28px !important;
+        }
+        .ww-primary-heading,
+        .ww-page-heading-primary {
+            line-height: 1.32 !important;
+            padding-top: 2px !important;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
 
 def default_wagewise_user_rows():
     return [
@@ -4157,15 +4193,38 @@ def render_selected_content_anchor():
     )
 
 def trigger_auto_scroll_to_content():
-    """V116.6 hotfix: avoid iframe/script based auto-scroll.
+    """V116.8 regression repair: restore mobile auto-scroll after section selection.
 
-    The previous implementation used old iframe-based HTML injection, which creates
-    an iframe and triggers Streamlit's deprecation warning. On mobile this could
-    also reserve unexpected blank screen space. We keep the pending flag cleanup
-    but do not inject an iframe.
+    Why this exists:
+    - st.html() is safe for CSS/HTML but does not execute JavaScript.
+    - Auto-scroll after clicking a Streamlit button needs JavaScript after rerun.
+    - We use a zero-height components bridge only for the scroll action.
+    - Height is set to 0 to avoid the earlier mobile blank-space regression.
+
+    This is intentionally narrow: it runs only when a navigation click sets
+    pending_auto_scroll_to_content=True.
     """
     if st.session_state.get("pending_auto_scroll_to_content"):
         st.session_state.pop("pending_auto_scroll_to_content", None)
+        components.html(
+            """
+            <script>
+            (function() {
+                function scrollToContent() {
+                    const doc = window.parent.document;
+                    const target = doc.getElementById('ww-section-content-anchor');
+                    if (target) {
+                        target.scrollIntoView({behavior: 'smooth', block: 'start'});
+                    }
+                }
+                setTimeout(scrollToContent, 120);
+                setTimeout(scrollToContent, 420);
+            })();
+            </script>
+            """,
+            height=0,
+            width=0,
+        )
 
 
 def page_heading_text(page_name):
